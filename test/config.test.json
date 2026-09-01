@@ -1,0 +1,21 @@
+{
+  "url": "http://localhost:8787/",
+  "browser": {
+    "locale": "pt-BR",
+    "viewport": { "width": 1280, "height": 900 },
+    "holdMs": 0
+  },
+  "answers": {
+    "scalePolicy": "most-positive",
+    "scaleDirection": "auto",
+    "receipt": {
+      "cnpj": "42591651136479",
+      "numero do pedido": "0142",
+      "valor": "39,90"
+    },
+    "comment": "Atendimento rapido e educado.",
+    "overrides": [
+      { "match": "tipo de atendimento", "option": "Balcão" }
+    ]
+  }
+}

@@ -1,0 +1,5 @@
+node_modules/
+runs/
+
+# A config real contem os dados do seu cupom; so o exemplo vai para o repo.
+config.json

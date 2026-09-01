@@ -1,0 +1,45 @@
+{
+  "url": "https://www.mcexperiencesurvey.com/bra",
+
+  "browser": {
+    "locale": "pt-BR",
+    "viewport": { "width": 1280, "height": 900 },
+    "holdMs": 8000
+  },
+
+  "answers": {
+    "_comentario": [
+      "scalePolicy nao tem valor padrao: e voce quem escolhe a nota.",
+      "Use 'most-positive', 'most-negative', 'neutral' ou { \"index\": N }.",
+      "Marque o que corresponde a visita que voce realmente fez."
+    ],
+    "scalePolicy": "most-positive",
+
+    "_scaleDirection": "'auto' deduz pelos rotulos. Se a escala nao tiver rotulo textual (so estrelas ou numeros sem contexto), fixe em 'first' ou 'last' depois de conferir com o comando inspect.",
+    "scaleDirection": "auto",
+
+    "_receipt": "Dados do seu cupom. A chave e casada contra o rotulo do campo na pagina, sem diferenciar maiusculas nem acentos.",
+    "receipt": {
+      "cnpj": "42591651136479",
+      "numero do pedido": "",
+      "data": "",
+      "hora": "",
+      "valor": ""
+    },
+
+    "_comment": "Texto usado em campos de comentario livre. Deixe vazio para preencher a mao.",
+    "comment": "",
+
+    "_overrides": [
+      "Regras por pergunta, avaliadas na ordem. A primeira que casar vence.",
+      "match: trecho do enunciado (ou regex, se regex=true)",
+      "option: rotulo ou indice da alternativa | text: conteudo de campo de texto | skip: true"
+    ],
+    "overrides": [
+      { "match": "qual foi o tipo de atendimento", "option": "Balcão" },
+      { "match": "deseja participar do sorteio", "option": "Não" },
+      { "match": "e-mail", "skip": true },
+      { "match": "telefone", "skip": true }
+    ]
+  }
+}

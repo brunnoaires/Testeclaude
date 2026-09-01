@@ -1,0 +1,21 @@
+{
+  "name": "mcsurvey-assist",
+  "version": "1.0.0",
+  "description": "Preenchimento assistido de formulario de pesquisa. Um envio por execucao, com confirmacao humana obrigatoria antes do envio final.",
+  "type": "module",
+  "bin": {
+    "mcsurvey-assist": "src/cli.js"
+  },
+  "scripts": {
+    "inspect": "node src/cli.js inspect",
+    "fill": "node src/cli.js fill"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0"
+  },
+  "license": "MIT",
+  "private": true
+}
