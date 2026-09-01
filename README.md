@@ -35,21 +35,34 @@ npm install
 npx playwright install chromium
 ```
 
+No PowerShell 5.1 (o padrão do Windows) o `&&` não existe — rode um comando por
+linha, como acima. O `&&` só funciona a partir do PowerShell 7.
+
 Se a máquina já tem um Chromium do Playwright instalado e a versão não bate com
 a do pacote, aponte para ele em vez de baixar outro:
 
 ```bash
-export MCSA_CHROMIUM=/caminho/para/chromium
+export MCSA_CHROMIUM=/caminho/para/chromium     # bash
 ```
 
-ou coloque `browser.executablePath` na config.
+```powershell
+$env:MCSA_CHROMIUM = "C:\caminho\para\chrome.exe"   # PowerShell
+```
+
+ou coloque `browser.executablePath` na config, que vale para os dois.
 
 ## Uso
 
 ```bash
-cp config.example.json config.json
-$EDITOR config.json          # url, dados do cupom, política de nota
+cp config.example.json config.json          # bash
 ```
+
+```powershell
+Copy-Item config.example.json config.json   # PowerShell
+```
+
+Abra `config.json` no seu editor e ajuste url, dados do cupom e política de
+nota.
 
 **1. Veja a estrutura do formulário antes de preencher pra valer:**
 
@@ -152,10 +165,16 @@ validação, salva um screenshot `-bloqueado.png` e para em vez de insistir.
 
 Há um formulário falso de três páginas no repositório:
 
+Suba o servidor num terminal:
+
 ```bash
-node test/mock-survey.js 8787 &
-MCSA_CHROMIUM=/opt/pw-browsers/chromium \
-  node src/cli.js fill --config test/config.test.json --headless --dry-run
+node test/mock-survey.js 8787
+```
+
+e rode a ferramenta contra ele em outro:
+
+```bash
+node src/cli.js fill --config test/config.test.json --dry-run
 ```
 
 Ele exercita os dois sentidos de escala Likert, casamento de campos de cupom,
