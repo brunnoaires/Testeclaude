@@ -25,6 +25,7 @@ GREEN, GRAY, BLUE, RED, YELLOW, BROWN = (
 BUTTONS = {
     'menu': (20, 520, 140, 50, 'MENU'),
     'rebirth': (300, 250, 200, 60, 'REBIRTH'),
+    'volte': (300, 250, 200, 60, 'VOLTE'),     # no lugar do REBIRTH, com o galo na torre
     'confirm': (340, 360, 120, 50, 'OK'),
     'close': (560, 150, 50, 50, 'X'),
     'tower': (600, 520, 170, 50, 'TORRE'),
@@ -46,10 +47,15 @@ def template_for(name, color):
     return img[y + 5:y + h - 5, x + 5:x + w - 5].copy()  # so o miolo, como o capture recomenda
 
 
+BADGE_AT, BADGE_COLOR = (170, 512), (2, 61, 255)   # bolinha "!" do botao de menu
+
+
 class FakeGame:
     """HUD com botao de menu e botao TORRE/RECUAR; menu com Rebirth (verde
     liberado, cinza nao) e X; dialogo de confirmacao opcional; tecla E sobe
-    o comedouro."""
+    o comedouro. Com o renascimento liberado aparece uma bolinha vermelha no
+    botao de menu; se o galo estiver na torre, o menu mostra VOLTE no lugar
+    do REBIRTH, como o jogo de verdade."""
 
     def __init__(self, ready=True, confirm_dialog=True, left=0, top=0, scale=1.0):
         self.ready, self.confirm_dialog = ready, confirm_dialog
@@ -63,7 +69,7 @@ class FakeGame:
     def visible(self):
         names = {'menu', 'retreat' if self.in_tower else 'tower'}
         if self.menu:
-            names |= {'rebirth', 'close'}
+            names |= {'volte' if self.ready and self.in_tower else 'rebirth', 'close'}
         if self.confirming:
             names.add('confirm')
         return names
@@ -71,10 +77,12 @@ class FakeGame:
     def grab(self):
         img = self.background.copy()
         colors = {'menu': BLUE, 'tower': BROWN, 'retreat': BROWN, 'close': RED, 'confirm': YELLOW,
-                  'rebirth': GREEN if self.ready else GRAY}
-        for name in ('menu', 'tower', 'retreat', 'rebirth', 'close', 'confirm'):
+                  'rebirth': GREEN if self.ready else GRAY, 'volte': BROWN}
+        for name in ('menu', 'tower', 'retreat', 'rebirth', 'volte', 'close', 'confirm'):
             if name in self.visible():
                 draw_button(img, name, colors[name])
+        if self.ready and not self.menu:
+            cv2.circle(img, BADGE_AT, 10, BADGE_COLOR, -1)
         return Frame(img, self.left, self.top, self.scale)
 
     def _hit(self, x, y):
@@ -92,6 +100,8 @@ class FakeGame:
             self.menu = not self.menu
         elif name == 'tower':
             self.in_tower = True
+        elif name == 'retreat':
+            self.in_tower = False
         elif name == 'rebirth' and self.ready:
             if self.confirm_dialog:
                 self.confirming = True
@@ -148,6 +158,28 @@ TASKS_CONFIG = {
 }
 
 
+BADGE_STEP = {'name': '!', 'color': '#FF3D02', 'area': [0.19, 0.81, 0.24, 0.89], 'min_pixels': 150,
+              'click': False, 'wait': 0}
+FLOW_CONFIG = {
+    'tasks': [
+        {'name': 'recuar', 'every_seconds': 10,
+         'steps': [BADGE_STEP,
+                   {'name': 'abrir menu', 'image': 'templates/menu.png'},
+                   {'name': 'VOLTE', 'image': 'templates/volte.png', 'click': False, 'wait': 0},
+                   {'name': 'fechar', 'image': 'templates/close.png'},
+                   {'name': 'RECUAR', 'image': 'templates/retreat.png', 'after': 8}],
+         'cleanup': [{'name': 'fechar', 'image': 'templates/close.png', 'wait': 0}]},
+        {'name': 'renascer', 'every_seconds': 10,
+         'steps': [BADGE_STEP,
+                   {'name': 'abrir menu', 'image': 'templates/menu.png'},
+                   {'name': 'rebirth', 'image': 'templates/rebirth.png'}],
+         'cleanup': [{'name': 'fechar', 'image': 'templates/close.png', 'wait': 0}]},
+        {'name': 'torre', 'every_seconds': 10,
+         'steps': [{'name': 'TORRE', 'image': 'templates/tower.png', 'wait': 0}]},
+    ],
+}
+
+
 class Workspace:
     """Pasta temporaria com config.json e os recortes."""
 
@@ -159,6 +191,8 @@ class Workspace:
         save_image(self.dir / 'templates/confirm.png', template_for('confirm', YELLOW))
         save_image(self.dir / 'templates/close.png', template_for('close', RED))
         save_image(self.dir / 'templates/tower.png', template_for('tower', BROWN))
+        save_image(self.dir / 'templates/retreat.png', template_for('retreat', BROWN))
+        save_image(self.dir / 'templates/volte.png', template_for('volte', BROWN))
         self.write(config)
 
     def write(self, config):
@@ -298,6 +332,8 @@ EXAMPLE = load_config(Path(__file__).resolve().parent.parent / 'config.example.j
 EXAMPLE_TASKS = {t.name: t for t in EXAMPLE.tasks}
 STEP_TORRE = EXAMPLE_TASKS['mandar galo para a torre'].steps[0]
 STEP_ALERTA, STEP_RENASCIMENTO, STEP_RENASCER = EXAMPLE_TASKS['renascer'].steps
+_RECUAR_STEPS = {s.name: s for s in EXAMPLE_TASKS['recuar galo para renascer'].steps}
+STEP_VOLTE, STEP_RECUAR = _RECUAR_STEPS['VOLTE PRO SEU GALINHEIRO'], _RECUAR_STEPS['botao RECUAR']
 
 
 def match(step, img):
@@ -317,6 +353,23 @@ class RealGameTest(unittest.TestCase):
         img = load_image(FIXTURES / 'menu_bloqueado.png')
         self.assertFalse(match_step(STEP_RENASCER, Frame(img))[0])
         self.assertLess(match(STEP_RENASCER, img).score, 0.6, 'texto diferente: o formato ja nao deveria bater')
+
+    def test_volte_galinheiro(self):
+        """menu_volte: renascimento liberado com o galo na torre."""
+        self.assertTrue(match_step(STEP_VOLTE, Frame(load_image(FIXTURES / 'menu_volte.png')))[0])
+        self.assertFalse(match_step(STEP_RENASCER, Frame(load_image(FIXTURES / 'menu_volte.png')))[0])
+        for other in ('menu_liberado', 'menu_bloqueado'):   # AINDA NAO tem o mesmo marrom
+            with self.subTest(other):
+                self.assertFalse(match_step(STEP_VOLTE, Frame(load_image(FIXTURES / f'{other}.png')))[0])
+
+    def test_recuar_and_torre_not_confused(self):
+        """hud_recuar: o botao da torre com o galo la dentro (RECUAR)."""
+        recuar = Frame(load_image(FIXTURES / 'hud_recuar.png'))
+        torre = Frame(load_image(FIXTURES / 'hud_baixo.png'))
+        self.assertTrue(match_step(STEP_RECUAR, recuar)[0])
+        self.assertFalse(match_step(STEP_RECUAR, torre)[0])
+        self.assertFalse(match_step(STEP_TORRE, recuar)[0], 'TORRE nunca pode achar o RECUAR (tiraria o galo)')
+        self.assertLess(match(STEP_TORRE, recuar.image).score, 0.75)
 
 
 class RealHudTest(unittest.TestCase):
@@ -597,10 +650,23 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(game.rebirths, 0)
 
     def test_rebirth_when_ready(self):
+        config = copy(TASKS_CONFIG)
+        by_name = {t['name']: t for t in config['tasks']}
+        config['tasks'] = [by_name['renascer'], by_name['torre'], by_name['comedouro']]
+        self.ws.write(config)
+        self.cfg = self.ws.load()
         game = FakeGame(ready=True)
         runner = self.run_for(game, 5)
-        self.assertEqual(runner.done[2], 1)
+        self.assertEqual(runner.done[0], 1)
         self.assertEqual(game.rebirths, 1)
+
+    def test_tower_before_rebirth_blocks_it(self):
+        # ordem antiga (torre antes de renascer): a torre manda o galo e o menu
+        # passa a mostrar VOLTE no lugar do REBIRTH
+        game = FakeGame(ready=True)
+        self.run_for(game, 5)
+        self.assertEqual(game.rebirths, 0)
+        self.assertIn('tower', game.clicked)
 
     def test_focus_before_each_task(self):
         calls = []
@@ -627,6 +693,51 @@ class RunnerTest(unittest.TestCase):
         for i, name in enumerate(runs):
             if name == 'torre':
                 self.assertTrue(i > 0 and runs[i - 1] == 'renascer', runs)
+
+    def run_flow(self, game, seconds=30):
+        self.ws.write(FLOW_CONFIG)
+        cfg = self.ws.load()
+        clock = FakeClock()
+        when = []
+
+        def click(x, y):
+            game.click(x, y)
+            when.append((game.clicked[-1], clock.t))
+
+        bot = Bot(game.grab, click, game.press, sleep=clock.sleep, clock=clock.now, log=lambda m: None)
+        runner = Runner(cfg, bot, clock=clock.now, log=lambda m: None)
+        while clock.t < seconds:
+            clock.sleep(runner.tick())
+        return when
+
+    def test_rebirth_with_chicken_in_tower(self):
+        """Pedido do usuario: com VOLTE PRO SEU GALINHEIRO no menu, fecha o
+        menu, clica em RECUAR, espera 8 s e renasce; depois o galo novo vai
+        para a torre."""
+        game = FakeGame(ready=True, confirm_dialog=False)
+        game.in_tower = True
+        when = self.run_flow(game)
+        names = [n for n, _ in when]
+        self.assertEqual(names[:7], ['menu', 'close', 'retreat', 'menu', 'rebirth', 'close', 'tower'])
+        self.assertEqual(game.rebirths, 1)
+        t_retreat, t_reopen = when[2][1], when[3][1]
+        self.assertGreaterEqual(t_reopen - t_retreat, 8, 'espera 8 s depois do RECUAR')
+        self.assertTrue(game.in_tower, 'o galo novo foi mandado para a torre')
+        self.assertNotIn(None, names, 'nenhum clique fora de botao')
+
+    def test_rebirth_with_chicken_home(self):
+        game = FakeGame(ready=True, confirm_dialog=False)
+        names = [n for n, _ in self.run_flow(game)]
+        # "recuar" abre o menu, nao ve VOLTE e fecha; "renascer" renasce
+        self.assertEqual(names[:6], ['menu', 'close', 'menu', 'rebirth', 'close', 'tower'])
+        self.assertNotIn('retreat', names)
+        self.assertEqual(game.rebirths, 1)
+
+    def test_no_alert_no_menu(self):
+        game = FakeGame(ready=False)
+        game.in_tower = True
+        names = [n for n, _ in self.run_flow(game)]
+        self.assertEqual(names, [], 'sem o !, nao abre menu nem tira o galo da torre')
 
     def test_tick_returns_time_until_next_task(self):
         clock = FakeClock()
@@ -833,9 +944,14 @@ class ConfigTest(unittest.TestCase):
         names = [t.name for t in cfg.tasks]
         # renascer vem antes da torre: com o ! na tela, renasce em vez de mandar
         # o galo a toa; logo depois de renascer, o galo novo ja vai para a torre
-        self.assertEqual(names, ['renascer', 'mandar galo para a torre', 'melhorar comedouro'])
+        # recuar antes de renascer (o renascer roda logo depois dos 8 s); os
+        # dois antes da torre: com o ! na tela, renasce em vez de mandar o
+        # galo a toa, e logo depois de renascer o galo novo ja vai
+        self.assertEqual(names, ['recuar galo para renascer', 'renascer', 'mandar galo para a torre',
+                                 'melhorar comedouro'])
         self.assertEqual({t.every_seconds for t in cfg.tasks}, {10}, 'mesmo ritmo: a ordem vale em toda rodada')
-        alert = cfg.tasks[0].steps[0]
+        self.assertEqual(STEP_RECUAR.after, 8)
+        alert = cfg.tasks[1].steps[0]
         self.assertFalse(alert.click)
         self.assertEqual(alert.color, parse_color('#FF3D02'))
         self.assertIsNotNone(alert.area)

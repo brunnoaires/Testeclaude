@@ -4,10 +4,24 @@
   "color_tolerance": 40,
   "tasks": [
     {
-      "name": "renascer",
+      "name": "recuar galo para renascer",
       "every_seconds": 10,
       "steps": [
         { "name": "! vermelho no Renascimento", "color": "#FF3D02", "area": [0.94, 0.40, 1.0, 0.53], "min_pixels": 150, "click": false, "wait": 2 },
+        { "name": "abrir menu Renascimento", "image": "templates/renascimento.png", "wait": 3 },
+        { "name": "VOLTE PRO SEU GALINHEIRO", "image": "templates/volte_galinheiro.png", "click": false, "wait": 2 },
+        { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 2 },
+        { "name": "botao RECUAR", "image": "templates/botao_recuar.png", "wait": 3, "confidence": 0.9, "after": 8 }
+      ],
+      "cleanup": [
+        { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 1 }
+      ]
+    },
+    {
+      "name": "renascer",
+      "every_seconds": 10,
+      "steps": [
+        { "name": "! vermelho no Renascimento", "color": "#FF3D02", "area": [0.94, 0.40, 1.0, 0.53], "min_pixels": 150, "click": false, "wait": 1 },
         { "name": "abrir menu Renascimento", "image": "templates/renascimento.png", "wait": 3 },
         { "name": "botao RENASCER (liberado)", "image": "templates/botao_renascer.png", "wait": 3 }
       ],

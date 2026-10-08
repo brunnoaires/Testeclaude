@@ -3,18 +3,20 @@
 Ciclo automático no **Grow a Chicken Fighter**, do Roblox: melhora o
 comedouro, manda o galo para a torre e renasce quando libera.
 
-O script olha a tela como você olharia e roda três **tarefas**, nesta ordem,
-a cada 10 segundos:
+O script olha a tela como você olharia e roda quatro **tarefas**, nesta
+ordem, a cada 10 segundos:
 
 | Ordem | Tarefa | O que faz |
 |---|---|---|
-| 1 | renascer | olha se o botão **Renascimento** está com o **!** vermelho; só então abre o menu, clica em **RENASCER** e fecha |
-| 2 | mandar galo para a torre | se o botão de baixo mostra **TORRE**, clica; se mostra **RECUAR**, o galo já está lá e não faz nada |
-| 3 | melhorar comedouro | aperta **E** 3 vezes; o boneco tem que estar parado ao lado do comedouro |
+| 1 | recuar galo para renascer | com o **!** vermelho no **Renascimento**, abre o menu; se está escrito **VOLTE PRO SEU GALINHEIRO** (liberou, mas o galo está na torre), fecha o menu, clica em **RECUAR** e espera 8 s |
+| 2 | renascer | com o **!** vermelho, abre o menu, clica em **RENASCER** e fecha |
+| 3 | mandar galo para a torre | se o botão de baixo mostra **TORRE**, clica; se mostra **RECUAR**, o galo já está lá e não faz nada |
+| 4 | melhorar comedouro | aperta **E** 3 vezes; o boneco tem que estar parado ao lado do comedouro |
 
-O renascimento é conferido antes da torre: com o **!** na tela, ele renasce
-em vez de mandar o galo à toa, e logo depois de renascer o galo novo já vai
-para a torre.
+A ordem importa. O renascimento vem antes da torre: com o **!** na tela, ele
+renasce em vez de mandar o galo à toa, e logo depois de renascer o galo novo
+já vai para a torre. E o "recuar" vem logo antes do "renascer": depois dos 8 s
+do RECUAR ele já renasce, antes que a tarefa da torre mande o galo de volta.
 
 Com o comedouro subindo, o galo ganha nível. A cada ida à torre ele vai mais
 longe, até passar do andar exigido. Aí aparece o **!** no Renascimento, o
@@ -64,7 +66,9 @@ Os recortes de todos os botões já vêm prontos em `templates/`:
 |---|---|
 | `renascimento.png` | o botão Renascimento, na lateral direita |
 | `botao_torre.png` | **só a palavra TORRE**, embaixo do castelo |
+| `botao_recuar.png` | **só a palavra RECUAR**, que aparece no lugar do TORRE com o galo na torre |
 | `botao_renascer.png` | RENASCER verde, dentro do menu |
+| `volte_galinheiro.png` | VOLTE PRO SEU GALINHEIRO, que aparece no lugar do RENASCER com o galo na torre |
 | `fechar_menu.png` | o X vermelho do menu |
 
 O **!** vermelho não usa recorte: o script procura a cor da bolinha
@@ -83,6 +87,14 @@ cada botão da config, se achou ou não. Esta é a saída com o seu print do
 comedouro (menu fechado, galo em casa, renascimento liberado):
 
 ```
+recuar galo para renascer:
+  ACHOU         ! vermelho no Renascimento: 916 pixels da cor na area (min 150), centro (1887, 469)
+  ACHOU         abrir menu Renascimento: formato 1.00 (min 0.85), cor 0 (max 40), melhor lugar (1853, 520)
+  nao achou     VOLTE PRO SEU GALINHEIRO: formato 0.20 (min 0.85), cor 72 (max 40), melhor lugar (1069, 237)
+  nao achou     fechar menu: formato 0.45 (min 0.85), cor 69 (max 40), melhor lugar (1045, 360)
+  nao achou     botao RECUAR: formato 0.59 (min 0.90), cor 37 (max 40), melhor lugar (126, 10)
+  nao achou     fechar menu: formato 0.45 (min 0.85), cor 69 (max 40), melhor lugar (1045, 360)
+
 renascer:
   ACHOU         ! vermelho no Renascimento: 916 pixels da cor na area (min 150), centro (1887, 469)
   ACHOU         abrir menu Renascimento: formato 1.00 (min 0.85), cor 0 (max 40), melhor lugar (1853, 520)
@@ -100,10 +112,11 @@ O `check` só vê o que está na tela no momento. Rode algumas vezes:
 
 1. **menu fechado e galo em casa:** tem que achar **Renascimento** e
    **TORRE**; o **!** só se o renascimento estiver liberado;
-2. **galo na torre** (botão mostrando RECUAR): **TORRE** tem que dar "nao
-   achou";
-3. **menu Renascimento aberto:** tem que achar o **X**, e o **RENASCER** só se
-   estiver liberado.
+2. **galo na torre** (botão mostrando RECUAR): tem que achar o **RECUAR**, e o
+   **TORRE** tem que dar "nao achou";
+3. **menu Renascimento aberto:** tem que achar o **X**; o **RENASCER** só se
+   estiver liberado com o galo em casa, e o **VOLTE PRO SEU GALINHEIRO** só se
+   estiver liberado com o galo na torre.
 
 Os botões de dentro do menu dão "nao achou" com o menu fechado, e vice-versa.
 Isso é normal.
@@ -154,6 +167,29 @@ py auto_rebirth.py run
 [14:31:46]   clicando em "botao TORRE" (960, 992)
 ```
 
+Quando libera com o galo ainda na torre:
+
+```
+[15:10:02] recuar galo para renascer
+[15:10:02]   "! vermelho no Renascimento" esta na tela (1887, 469)
+[15:10:02]   clicando em "abrir menu Renascimento" (1853, 520)
+[15:10:03]   "VOLTE PRO SEU GALINHEIRO" esta na tela (962, 680)
+[15:10:03]   clicando em "fechar menu" (1220, 205)
+[15:10:04]   clicando em "botao RECUAR" (960, 992)
+[15:10:13] "recuar galo para renascer" feito (1x nesta sessao)
+[15:10:13] renascer
+[15:10:13]   "! vermelho no Renascimento" esta na tela (1887, 469)
+[15:10:13]   clicando em "abrir menu Renascimento" (1853, 520)
+[15:10:14]   clicando em "botao RENASCER (liberado)" (960, 682)
+[15:10:15]   clicando em "fechar menu" (1220, 205)
+[15:10:16] "renascer" feito (2x nesta sessao)
+[15:10:16] mandar galo para a torre
+[15:10:16]   clicando em "botao TORRE" (960, 992)
+```
+
+Se o galo demorar mais de 8 s para voltar para casa no seu jogo, aumente o
+`"after": 8` do passo "botao RECUAR" no `config.json`.
+
 As linhas "nao apareceu, fica para a proxima" são normais: o **!** ainda não
 apareceu, ou o TORRE virou RECUAR porque o galo já está na torre. Depois de
 cada clique o mouse volta para o meio da janela, para não ficar parado em
@@ -201,12 +237,12 @@ frente só serve para trazê-la para a frente, e o jogo não vê esse clique.
 ## Ajustando o ritmo
 
 Os intervalos ficam em `every_seconds`, no `config.json`. As tarefas rodam
-na ordem em que aparecem lá; deixe "renascer" e "mandar galo para a torre"
-com o mesmo intervalo para a conferência do renascimento continuar vindo logo
-antes de cada ida à torre.
+na ordem em que aparecem lá; deixe "recuar galo para renascer", "renascer" e
+"mandar galo para a torre" com o mesmo intervalo, para que, a cada rodada, a
+conferência do renascimento venha logo antes da ida à torre.
 
 - **O galo vai para a torre fraco demais e perde cedo:** aumente o intervalo
-  das duas (ex.: `300` para 5 minutos). Assim ele passa mais tempo subindo de
+  das três (ex.: `300` para 5 minutos). Assim ele passa mais tempo subindo de
   nível entre uma ida e outra.
 - **Dinheiro sobrando:** diminua o intervalo do comedouro ou aumente o
   `repeat` do E.
