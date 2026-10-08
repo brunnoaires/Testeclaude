@@ -11,6 +11,7 @@ Nao injeta script no Roblox nem le memoria do jogo.
   python auto_rebirth.py check                              testa os recortes
   python auto_rebirth.py run                                roda as tarefas
   python auto_rebirth.py pos                                mostra a posicao do mouse
+  python auto_rebirth.py clicktest                          testa se o Roblox aceita o clique
 
 Para parar: Ctrl+C no terminal, ou leve o mouse para um canto da tela.
 """
@@ -28,7 +29,12 @@ from vision import Frame, find_template, has_detail, load_template, save_image
 
 POLL_SECONDS = 0.3
 
-TOP_KEYS = {'window_title', 'interval_seconds', 'confidence', 'color_tolerance', 'tasks', 'steps', 'cleanup'}
+TOP_KEYS = {'window_title', 'click_method', 'interval_seconds', 'confidence', 'color_tolerance',
+            'tasks', 'steps', 'cleanup'}
+# sendinput: posiciona com SetCursorPos e mexe/clica por SendInput (padrao no Windows)
+# directinput: tudo por SendInput, inclusive o posicionamento (so no monitor principal)
+# pyautogui: o jeito antigo; no Roblox a seta chega no botao mas o clique pode nao pegar
+CLICK_METHODS = ('sendinput', 'directinput', 'pyautogui')
 TASK_KEYS = {'name', 'every_seconds', 'steps', 'cleanup'}
 STEP_KEYS = {'name', 'image', 'pos', 'key', 'click', 'hold', 'repeat', 'wait', 'after', 'optional',
              'confidence', 'color_tolerance'}
@@ -69,6 +75,7 @@ class Task:
 @dataclass
 class Config:
     window_title: str = 'Roblox'
+    click_method: str | None = None   # None: sendinput no Windows, pyautogui no resto
     tasks: list = field(default_factory=list)
 
 
@@ -166,6 +173,14 @@ def _parse_task(raw, base, defaults, where):
     )
 
 
+def _click_method(value):
+    if value is None:
+        return None
+    if value not in CLICK_METHODS:
+        raise ConfigError(f'"click_method" tem que ser um destes: {", ".join(CLICK_METHODS)}')
+    return value
+
+
 def load_config(path):
     path = Path(path)
     if not path.is_file():
@@ -199,6 +214,7 @@ def load_config(path):
         tasks = [{'name': 'renascer', 'steps': raw.get('steps'), 'cleanup': raw.get('cleanup', [])}]
     return Config(
         window_title=str(raw.get('window_title', 'Roblox')),
+        click_method=_click_method(raw.get('click_method')),
         tasks=[_parse_task(t, base, defaults, f'tasks[{i}]') for i, t in enumerate(tasks)],
     )
 
@@ -361,19 +377,48 @@ def make_grabber(window_title):
     return grab
 
 
-def make_clicker():
+def _directinput():
+    import pydirectinput
+    pydirectinput.FAILSAFE = False  # o failsafe vale pelo do pyautogui (todos os cantos)
+    return pydirectinput
+
+
+def make_clicker(method=None):
     import pyautogui
     pyautogui.FAILSAFE = True
 
+    method = method or ('sendinput' if sys.platform == 'win32' else 'pyautogui')
+    if method != 'pyautogui' and sys.platform != 'win32':
+        raise SystemExit(f'click_method "{method}" so existe no Windows; use "pyautogui"')
+
+    if method == 'pyautogui':
+        def click(x, y):
+            pyautogui.moveTo(x, y, duration=0.15)
+            pyautogui.moveRel(3, 0, duration=0.05)
+            pyautogui.moveRel(-3, 0, duration=0.05)
+            pyautogui.mouseDown()
+            time.sleep(0.06)
+            pyautogui.mouseUp()
+        return click
+
+    di = _directinput()
+
     def click(x, y):
-        pyautogui.moveTo(x, y, duration=0.15)
-        # O Roblox so registra o hover do botao com movimento real do mouse;
-        # sem esse chacoalhar o clique as vezes nao pega.
-        pyautogui.moveRel(3, 0, duration=0.05)
-        pyautogui.moveRel(-3, 0, duration=0.05)
-        pyautogui.mouseDown()
-        time.sleep(0.06)
-        pyautogui.mouseUp()
+        pyautogui.failSafeCheck()
+        if method == 'directinput':
+            di.moveTo(x, y)
+        else:
+            pyautogui.moveTo(x, y, duration=0.15)
+        # O Roblox le o mouse em baixo nivel (raw input). SetCursorPos, que o
+        # pyautogui usa, teletransporta a seta sem gerar esse evento: a seta
+        # chega no botao, mas para o Roblox o mouse nao esta em cima dele e o
+        # clique e ignorado. Um empurrao relativo por SendInput gera o evento,
+        # como um mouse de verdade. Cada chamada do pydirectinput ja espera
+        # 0.1 s depois (PAUSE), o que da tempo do Roblox ver cada passo.
+        di.moveRel(2, 0, relative=True)
+        di.moveRel(-2, 0, relative=True)
+        di.mouseDown()
+        di.mouseUp()
 
     return click
 
@@ -385,8 +430,7 @@ def make_presser():
         # Jogos em DirectX, o Roblox incluso, costumam ignorar a tecla virtual
         # que o pyautogui manda; o pydirectinput manda scan code, como o
         # teclado de verdade.
-        import pydirectinput as keys
-        keys.FAILSAFE = False  # o failsafe vale pelo do pyautogui, abaixo
+        keys = _directinput()
     else:
         keys = pyautogui
 
@@ -400,13 +444,32 @@ def make_presser():
 
 
 def _focus(title):
+    """Traz o Roblox para a frente. Devolve False se nao conseguiu.
+
+    Se o Roblox nao estiver na frente, o primeiro clique so foca a janela e o
+    jogo nao ve o clique.
+    """
     win = _find_window(title)
     if win is None:
-        return
+        return False
     try:
         win.activate()
     except Exception:
         pass  # pygetwindow as vezes reclama mesmo quando funcionou
+    if sys.platform != 'win32':
+        return True
+    import ctypes
+    user32 = ctypes.windll.user32
+    hwnd = getattr(win, '_hWnd', None)
+    if not hwnd or user32.GetForegroundWindow() == hwnd:
+        return True
+    # O Windows so deixa trocar a janela da frente quem recebeu a ultima
+    # tecla. Um ALT sintetico libera (truque conhecido do SetForegroundWindow).
+    user32.keybd_event(0x12, 0, 0, 0)
+    user32.keybd_event(0x12, 0, 2, 0)
+    user32.SetForegroundWindow(hwnd)
+    time.sleep(0.2)
+    return user32.GetForegroundWindow() == hwnd
 
 
 def _describe_window(title):
@@ -426,8 +489,16 @@ def cmd_run(cfg, once):
     import pyautogui
 
     _describe_window(cfg.window_title)
-    bot = Bot(make_grabber(cfg.window_title), make_clicker(), make_presser())
-    runner = Runner(cfg, bot, focus=lambda: _focus(cfg.window_title))
+    bot = Bot(make_grabber(cfg.window_title), make_clicker(cfg.click_method), make_presser())
+    warned = []
+
+    def focus():
+        if not _focus(cfg.window_title) and not warned and _find_window(cfg.window_title):
+            warned.append(1)
+            log('AVISO: o Windows nao deixou trazer o Roblox para a frente. Clique uma vez '
+                'dentro do Roblox; se os cliques nao pegarem, e isso.')
+
+    runner = Runner(cfg, bot, focus=focus)
     for task in cfg.tasks:
         log(f'tarefa "{task.name}": a cada {task.every_seconds:g}s')
     log('rodando. Para parar: Ctrl+C aqui, ou mouse num canto da tela.')
@@ -507,6 +578,26 @@ def cmd_capture(out, delay):
     print(f'Salvo {out} ({crop.shape[1]}x{crop.shape[0]})')
 
 
+def cmd_clicktest(window_title, method, delay):
+    import pyautogui
+
+    shown = method or ('sendinput' if sys.platform == 'win32' else 'pyautogui')
+    click = make_clicker(method)
+    print(f'Teste de clique (metodo {shown}). Deixe o Roblox aberto, com o menu '
+          f'Renascimento FECHADO.')
+    _countdown('Ponha o mouse em cima do botao Renascimento', delay)
+    p = pyautogui.position()
+    _focus(window_title)
+    click(p.x, p.y)
+    print(f'Cliquei em ({p.x}, {p.y}).')
+    print(f'Abriu o menu? Entao o metodo {shown} funciona no seu PC. Para o "run" usar ele, '
+          f'coloque no topo do config.json: "click_method": "{shown}",')
+    print('Nao abriu? Feche o menu se precisar e teste os outros:')
+    for m in CLICK_METHODS:
+        if m != shown:
+            print(f'  py auto_rebirth.py clicktest --method {m}')
+
+
 def cmd_pos():
     import pyautogui
     print('Posicao do mouse (use em "pos": [x, y]). Ctrl+C para sair.')
@@ -533,6 +624,9 @@ def main(argv=None):
     p.add_argument('out', help='arquivo de saida, ex.: templates/botao_torre.png')
     p.add_argument('--delay', type=int, default=4, help='segundos para posicionar o mouse (padrao 4)')
     sub.add_parser('pos', help='mostra a posicao do mouse')
+    p = sub.add_parser('clicktest', parents=[common], help='clica onde o mouse estiver, para testar se o Roblox aceita')
+    p.add_argument('--method', choices=CLICK_METHODS, help='padrao: o da config, ou sendinput no Windows')
+    p.add_argument('--delay', type=int, default=5, help='segundos para posicionar o mouse (padrao 5)')
     args = parser.parse_args(argv)
 
     _dpi_aware()
@@ -541,6 +635,9 @@ def main(argv=None):
             cmd_capture(args.out, args.delay)
         elif args.command == 'pos':
             cmd_pos()
+        elif args.command == 'clicktest':
+            cfg = load_config(args.config) if Path(args.config).is_file() else Config()
+            cmd_clicktest(cfg.window_title, args.method or cfg.click_method, args.delay)
         else:
             cfg = load_config(args.config)
             if args.command == 'check':

@@ -141,6 +141,40 @@ Para parar, aperte **Ctrl+C** no terminal ou jogue o mouse num **canto da
 tela** (o failsafe do pyautogui interrompe na hora). `run --once` roda cada
 tarefa uma vez e sai, o que é bom para testar.
 
+## Se a seta vai no botão mas não clica
+
+O Roblox lê o mouse num nível mais baixo que a maioria dos programas, e
+alguns jeitos de simular clique levam a seta até o botão sem que o jogo
+perceba. No Windows, o script usa por padrão o jeito que o Roblox costuma
+aceitar (`sendinput`): posiciona a seta, dá um empurrãozinho de 2 pixels e
+clica, tudo como um mouse de verdade.
+
+Para testar rápido, sem rodar tudo:
+
+```powershell
+py auto_rebirth.py clicktest
+```
+
+Com o menu Renascimento **fechado**, você tem 5 segundos para pôr o mouse em
+cima do botão Renascimento. O script traz o Roblox para a frente e clica ali.
+Se o menu abrir, está funcionando. Se não abrir, teste os outros jeitos:
+
+```powershell
+py auto_rebirth.py clicktest --method directinput
+py auto_rebirth.py clicktest --method pyautogui
+```
+
+O que funcionar, coloque no topo do `config.json`, logo depois de
+`"window_title": "Roblox",`:
+
+```json
+  "click_method": "directinput",
+```
+
+Se aparecer no log "o Windows nao deixou trazer o Roblox para a frente",
+clique uma vez dentro do Roblox. Um clique numa janela que não está na
+frente só serve para trazê-la para a frente, e o jogo não vê esse clique.
+
 ## Ajustando o ritmo
 
 Os intervalos ficam em `every_seconds`, no `config.json`:
@@ -219,6 +253,7 @@ passo depois do RENASCER, nos `steps` da tarefa "renascer":
 | Chave | Padrão | O que faz |
 |---|---|---|
 | `window_title` | `"Roblox"` | título da janela; a busca fica restrita a ela |
+| `click_method` | `sendinput` no Windows | jeito de clicar: `sendinput`, `directinput` (só no monitor principal) ou `pyautogui`; veja "Se a seta vai no botão mas não clica" |
 | `interval_seconds` | `30` | intervalo das tarefas que não têm `every_seconds` |
 | `confidence` | `0.85` | nota mínima de formato (0 a 1) |
 | `color_tolerance` | `40` | diferença máxima de cor (0 a 255) |

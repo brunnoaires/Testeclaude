@@ -556,6 +556,14 @@ class ConfigTest(unittest.TestCase):
         self.ws.write(config)
         self.assertEqual(self.ws.load().tasks[0].steps[0].key, 'space')
 
+    def test_click_method(self):
+        self.assertIsNone(self.ws.load().click_method)
+        self.ws.write({**CONFIG, 'click_method': 'directinput'})
+        self.assertEqual(self.ws.load().click_method, 'directinput')
+
+    def test_bad_click_method(self):
+        self.assertConfigError({**CONFIG, 'click_method': 'mouse'}, 'click_method')
+
     def test_bad_click(self):
         config = copy(CONFIG)
         config['steps'][0]['click'] = 'nao'
