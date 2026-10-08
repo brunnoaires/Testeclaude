@@ -128,8 +128,11 @@ def _pixels(image, mask):
 
 
 def has_detail(image, mask=None):
+    # Desvio por canal: um verde liso (40, 190, 60) tem canais diferentes entre
+    # si, mas nenhuma variacao dentro de cada um, e e isso que o matchTemplate
+    # compara.
     pixels = _pixels(image, mask)
-    return len(pixels) >= 20 and float(pixels.std()) >= MIN_DETAIL
+    return len(pixels) >= 20 and float(pixels.std(axis=0).max()) >= MIN_DETAIL
 
 
 def find_template(screen, template, confidence, color_tolerance, mask=None):

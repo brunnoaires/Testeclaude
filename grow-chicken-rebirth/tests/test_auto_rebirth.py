@@ -222,17 +222,31 @@ class VisionTest(unittest.TestCase):
         mask = np.zeros(crop.shape[:2], bool)
         mask[pad:-pad, pad:-pad] = True
         other = game.grab().image.copy()
-        other[region][~mask] = 255 - other[region][~mask]  # cenario bem diferente em volta
-        self.assertLess(find_template(other, crop, 0.85, 40).score, 0.85, 'sem mascara o fundo atrapalha')
+        other[region][~mask] = (250, 250, 250)  # cenario claro e liso em volta
+        self.assertFalse(find_template(other, crop, 0.85, 40).found, 'sem mascara o fundo atrapalha')
         m = find_template(other, crop, 0.85, 40, mask)
         self.assertTrue(m.found)
         self.assertGreater(m.score, 0.99)
+        self.assertLess(m.color_diff, 5, 'a cor tambem so olha os pixels do botao')
 
     def test_mask_with_too_few_pixels(self):
         tpl = template_for('tower', BROWN)
+        ys, xs = np.nonzero((tpl == 255).all(axis=2))     # letras brancas
         mask = np.zeros(tpl.shape[:2], bool)
-        mask[0, :5] = True
-        self.assertFalse(find_template(FakeGame().grab().image, tpl, 0.85, 40, mask).found)
+        mask[ys[:40:10], xs[:40:10]] = True
+        mask[20, :4] = True                                # e um pouco do fundo marrom
+        self.assertLess(mask.sum(), 20)
+        self.assertGreaterEqual(tpl[mask].std(axis=0).max(), 5, 'tem variacao: quem barra e o minimo de pixels')
+        game = FakeGame()
+        game.in_tower = True   # TORRE nao esta na tela: 8 pixels batem em qualquer lugar
+        self.assertFalse(find_template(game.grab().image, tpl, 0.85, 40, mask).found)
+
+    def test_flat_colored_template_rejected(self):
+        green = np.zeros((30, 60, 3), np.uint8)
+        green[:] = GREEN   # canais diferentes entre si, mas liso
+        game = FakeGame()
+        game.menu = True
+        self.assertFalse(find_template(game.grab().image, green, 0.85, 40).found)
 
     def test_load_template_reads_alpha_as_mask(self):
         with tempfile.TemporaryDirectory() as d:
@@ -280,23 +294,28 @@ class VisionTest(unittest.TestCase):
 FIXTURES = Path(__file__).resolve().parent / 'fixtures'
 
 
+EXAMPLE = load_config(Path(__file__).resolve().parent.parent / 'config.example.json')
+STEP_TORRE = EXAMPLE.tasks[1].steps[0]
+STEP_ALERTA, STEP_RENASCIMENTO, STEP_RENASCER = EXAMPLE.tasks[2].steps
+
+
+def match(step, img):
+    """O que o bot calcula para esse passo, com os dados da config de exemplo."""
+    return find_template(img, step.template, step.confidence, step.color_tolerance, step.mask)
+
+
 class RealGameTest(unittest.TestCase):
     """Pedacos de prints do jogo de verdade: o menu com RENASCER (verde,
-    liberado) e com AINDA NAO (marrom, bloqueado), os dois com MARCOS embaixo."""
-
-    FIXTURES = FIXTURES
-
-    def setUp(self):
-        self.template = load_image(self.FIXTURES / 'renascer.png')
+    liberado) e com AINDA NAO (marrom, bloqueado), os dois com MARCOS embaixo.
+    Usa o passo e o recorte que vao para o usuario (config.example.json)."""
 
     def test_renascer_found_when_unlocked(self):
-        m = find_template(load_image(self.FIXTURES / 'menu_liberado.png'), self.template, 0.85, 40)
-        self.assertTrue(m.found)
+        self.assertTrue(match_step(STEP_RENASCER, Frame(load_image(FIXTURES / 'menu_liberado.png')))[0])
 
     def test_ainda_nao_rejected(self):
-        m = find_template(load_image(self.FIXTURES / 'menu_bloqueado.png'), self.template, 0.85, 40)
-        self.assertFalse(m.found)
-        self.assertLess(m.score, 0.6, 'texto diferente: o formato ja nao deveria bater')
+        img = load_image(FIXTURES / 'menu_bloqueado.png')
+        self.assertFalse(match_step(STEP_RENASCER, Frame(img))[0])
+        self.assertLess(match(STEP_RENASCER, img).score, 0.6, 'texto diferente: o formato ja nao deveria bater')
 
 
 class RealHudTest(unittest.TestCase):
@@ -309,6 +328,7 @@ class RealHudTest(unittest.TestCase):
       como se a camera tivesse girado.
     hud_guilda: Guilda com a bolinha "1", mesmo estilo e mesma cor do !.
     hud_baixo: CHAMAR, TORRE e CAOS PROFISSIONAL.
+    ceu: pedaco do ceu do mesmo print, quase liso.
 
     O ! e procurado pela cor, com o passo exatamente como esta no
     config.example.json. Para a area (fracao da janela) valer, os pedacos sao
@@ -320,14 +340,7 @@ class RealHudTest(unittest.TestCase):
     GUILD_AT = (530, 240)       # canto do pedaco da Guilda no print
     BADGE = (112, 149, 104, 155)  # bolinha do ! dentro de hud_direita (y1, y2, x1, x2)
 
-    def find(self, template, screen, confidence=0.85):
-        img, mask = load_template(FIXTURES / f'{template}.png')
-        return find_template(load_image(FIXTURES / f'{screen}.png'), img, confidence, 40, mask)
-
-    @classmethod
-    def setUpClass(cls):
-        cfg = load_config(Path(__file__).resolve().parent.parent / 'config.example.json')
-        cls.alert = cfg.tasks[2].steps[0]
+    alert = STEP_ALERTA
 
     def window(self, hud, guild=None):
         canvas = np.full((*self.WINDOW, 3), 110, np.uint8)
@@ -381,13 +394,49 @@ class RealHudTest(unittest.TestCase):
     def test_rebirth_button_found_with_or_without_alert(self):
         for screen in ('hud_direita', 'hud_direita_sem_alerta', 'hud_direita_fundo_trocado'):
             with self.subTest(screen=screen):
-                self.assertTrue(self.find('renascimento', screen).found)
+                self.assertTrue(match_step(STEP_RENASCIMENTO, self.window(load_image(FIXTURES / f'{screen}.png')))[0])
+
+    def test_rebirth_button_on_solid_backgrounds(self):
+        """So a mascara sobrevive: o cenario em volta do botao vira ceu, branco
+        ou noite. Sem mascara (no formato ou na cor), o botao some."""
+        hud = load_image(FIXTURES / 'hud_direita.png')
+        where = match(STEP_RENASCIMENTO, hud)
+        h, w = STEP_RENASCIMENTO.template.shape[:2]
+        x, y = where.center[0] - w // 2, where.center[1] - h // 2
+        for name, color in (('ceu', (235, 200, 120)), ('branco', (250, 250, 250)), ('noite', (40, 20, 10))):
+            with self.subTest(name):
+                img = hud.copy()
+                img[y:y + h, x:x + w][~STEP_RENASCIMENTO.mask] = color
+                self.assertTrue(match_step(STEP_RENASCIMENTO, self.window(img))[0])
+                self.assertLess(match(STEP_RENASCIMENTO, img).color_diff, 5)
+
+    @staticmethod
+    def next_to_sky(hud):
+        """hud com um pedaco do ceu do print a esquerda (ceu.png, repetido
+        para cobrir a altura)."""
+        sky = load_image(FIXTURES / 'ceu.png')
+        reps = -(-hud.shape[0] // sky.shape[0])
+        column = np.vstack([sky] * reps)[:hud.shape[0]]
+        return np.hstack([column, hud]), sky.shape[1]
+
+    def test_buttons_next_to_real_sky(self):
+        """No ceu liso do print, o matchTemplate com mascara solta NaN e +inf
+        (0/0). Se isso nao for descartado, o "melhor lugar" vira o ceu e o bot
+        clica nele em vez do botao."""
+        for step, fixture in ((STEP_RENASCIMENTO, 'hud_direita'), (STEP_TORRE, 'hud_baixo')):
+            with self.subTest(step.name):
+                hud = load_image(FIXTURES / f'{fixture}.png')
+                expected = match(step, hud).center
+                canvas, dx = self.next_to_sky(hud)
+                m = match(step, canvas)
+                self.assertTrue(m.found)
+                self.assertEqual(m.center, (expected[0] + dx, expected[1]))
 
     def test_tower_found_on_the_right_label(self):
-        m = self.find('botao_torre', 'hud_baixo', 0.9)
-        self.assertTrue(m.found)
+        found, point, _ = match_step(STEP_TORRE, Frame(load_image(FIXTURES / 'hud_baixo.png')))
+        self.assertTrue(found)
         # TORRE fica no meio: CHAMAR a esquerda, CAOS PROFISSIONAL a direita
-        self.assertTrue(170 < m.center[0] < 230, m.center)
+        self.assertTrue(170 < point[0] < 230, point)
 
 
 class TaskTest(unittest.TestCase):
@@ -724,10 +773,14 @@ class ConfigTest(unittest.TestCase):
         self.assertConfigError(config, 'capture templates/nao_existe.png')
 
     def test_flat_image_rejected(self):
-        save_image(self.ws.dir / 'templates/liso.png', np.full((30, 60, 3), 90, np.uint8))
-        config = copy(CONFIG)
-        config['steps'][0]['image'] = 'templates/liso.png'
-        self.assertConfigError(config, 'cor lisa')
+        for name, color in (('cinza', (90, 90, 90)), ('verde', GREEN)):
+            with self.subTest(name):
+                flat = np.zeros((30, 60, 3), np.uint8)
+                flat[:] = color
+                save_image(self.ws.dir / f'templates/{name}.png', flat)
+                config = copy(CONFIG)
+                config['steps'][0]['image'] = f'templates/{name}.png'
+                self.assertConfigError(config, 'cor lisa')
 
     def test_no_steps(self):
         self.assertConfigError({**CONFIG, 'steps': []}, 'steps')
@@ -744,6 +797,13 @@ class ConfigTest(unittest.TestCase):
         (self.ws.dir / 'config.json').write_text('{ "steps": [ }', encoding='utf-8')
         with self.assertRaises(ConfigError):
             self.ws.load()
+
+    def test_example_config_steps_used_by_real_tests(self):
+        self.assertEqual(STEP_RENASCER.image.name, 'botao_renascer.png')
+        self.assertEqual(STEP_RENASCIMENTO.image.name, 'renascimento.png')
+        self.assertEqual(STEP_TORRE.image.name, 'botao_torre.png')
+        self.assertIsNotNone(STEP_RENASCIMENTO.mask)
+        self.assertIsNotNone(STEP_TORRE.mask)
 
     def test_example_config_loads_as_is(self):
         # Todos os recortes do exemplo vem prontos em templates/.

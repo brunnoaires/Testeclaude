@@ -573,7 +573,7 @@ def cmd_run(cfg, once):
 
     _describe_window(cfg.window_title)
     clicker = make_clicker(cfg.click_method, park=lambda: _window_center(cfg.window_title))
-    bot = Bot(make_grabber(cfg.window_title), clicker, make_presser())
+    bot = Bot(make_grabber(cfg.window_title), clicker, make_presser(), sleep=_sleep_watching_failsafe)
     warned = []
 
     def focus():
