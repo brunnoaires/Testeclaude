@@ -15,7 +15,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from auto_rebirth import Bot, ConfigError, load_config  # noqa: E402
-from vision import Frame, find_template, save_image  # noqa: E402
+from vision import Frame, find_template, load_image, save_image  # noqa: E402
 
 GREEN, GRAY, BLUE, RED, YELLOW = (40, 190, 60), (130, 130, 130), (200, 120, 30), (40, 40, 210), (30, 200, 230)
 
@@ -181,6 +181,25 @@ class VisionTest(unittest.TestCase):
     def test_template_bigger_than_screen(self):
         m = find_template(np.zeros((10, 10, 3), np.uint8), np.zeros((20, 20, 3), np.uint8), 0.85, 40)
         self.assertFalse(m.found)
+
+
+class RealGameTest(unittest.TestCase):
+    """Pedacos de prints do jogo de verdade: o menu com RENASCER (verde,
+    liberado) e com AINDA NAO (marrom, bloqueado), os dois com MARCOS embaixo."""
+
+    FIXTURES = Path(__file__).resolve().parent / 'fixtures'
+
+    def setUp(self):
+        self.template = load_image(self.FIXTURES / 'renascer.png')
+
+    def test_renascer_found_when_unlocked(self):
+        m = find_template(load_image(self.FIXTURES / 'menu_liberado.png'), self.template, 0.85, 40)
+        self.assertTrue(m.found)
+
+    def test_ainda_nao_rejected(self):
+        m = find_template(load_image(self.FIXTURES / 'menu_bloqueado.png'), self.template, 0.85, 40)
+        self.assertFalse(m.found)
+        self.assertLess(m.score, 0.6, 'texto diferente: o formato ja nao deveria bater')
 
 
 class CycleTest(unittest.TestCase):

@@ -5,13 +5,11 @@ Renascimento (rebirth) automático no **Grow a Chicken Fighter**, do Roblox.
 O script olha a tela como você olharia. A cada ciclo ele:
 
 1. clica no botão **Renascimento**, na lateral direita;
-2. olha se o botão de renascer dentro do menu está **liberado**, pela cor dele;
-3. se estiver, clica nele e confirma;
-4. fecha o menu e espera o próximo ciclo (padrão: 30 s).
+2. olha o botão grande do menu: se está **RENASCER** (verde), clica; se está
+   **AINDA NÃO** (marrom), não clica;
+3. fecha o menu no X e espera o próximo ciclo (padrão: 30 s).
 
-Se o renascimento ainda não liberou, ele só fecha o menu e tenta de novo
-depois. O botão só libera quando você bate a meta da torre que aparece no
-menu.
+O RENASCER aparece quando a barra "Andar da torre" completa (ex.: 58 / 49).
 
 Ele não injeta script no Roblox, não usa executor e não lê a memória do jogo.
 São só cliques de mouse, como um auto clicker que enxerga a tela.
@@ -19,8 +17,9 @@ São só cliques de mouse, como um auto clicker que enxerga a tela.
 ## Antes de usar
 
 - **Feito para Windows**, com Python 3.12 ou mais novo. Foi testado num Linux
-  com tela virtual, contra uma imitação do menu do jogo. No Windows, com o
-  Roblox de verdade, ainda não foi rodado.
+  com tela virtual, contra uma imitação do menu do jogo, e o reconhecimento do
+  RENASCER x AINDA NÃO foi conferido em prints reais do jogo. No Windows, com
+  o Roblox de verdade, ainda não foi rodado.
 - **O Roblox tem que estar visível.** Pode estar em janela, mas não pode estar
   minimizado nem coberto por outra janela. A cada ciclo o script traz o Roblox
   para a frente e move o mouse, então use o PC para outra coisa só se não se
@@ -46,14 +45,17 @@ Copy-Item config.example.json config.json
 
 ## 1. Recortar os botões
 
-O script precisa de uma imagem de cada botão, salva em `templates/`:
+O script precisa de uma imagem de cada botão, em `templates/`:
 
-| Arquivo | Botão | Quando aparece |
+| Arquivo | Botão | Situação |
 |---|---|---|
-| `renascimento.png` | "Renascimento" na lateral direita da tela | sempre |
-| `botao_renascer.png` | o botão que faz o renascimento, **liberado** (colorido) | menu aberto, depois de bater a meta |
-| `confirmar.png` | "Sim" / "Confirmar", se o jogo pedir confirmação | depois de clicar em renascer |
-| `fechar_menu.png` | o X do menu | menu aberto |
+| `renascimento.png` | "Renascimento" na lateral direita da tela | **falta recortar** |
+| `botao_renascer.png` | RENASCER verde, dentro do menu | já vem pronto |
+| `fechar_menu.png` | o X vermelho do menu | já vem pronto |
+
+Os dois que já vêm prontos foram recortados de um print do jogo com a janela
+em cerca de 1920 px de largura. Se o seu Roblox está em outro tamanho e o
+`check` (passo 2) não achar esses dois, recorte de novo.
 
 Para recortar, deixe o botão visível no Roblox e rode:
 
@@ -62,18 +64,13 @@ py auto_rebirth.py capture templates/renascimento.png
 ```
 
 Você tem 4 segundos para pôr o mouse no **canto superior esquerdo** do botão
-e mais 4 segundos para pôr no **canto inferior direito**. Repita para cada
-arquivo da tabela.
+e mais 4 segundos para pôr no **canto inferior direito**.
 
 Dicas:
 
 - Pegue o miolo do botão (texto e ícone), sem o cenário 3D em volta. O
   cenário muda quando a câmera mexe e atrapalha a comparação.
-- O `botao_renascer.png` tem que ser recortado com o botão **liberado**. Se
-  ainda não liberou para você, jogue até liberar, recorte e deixe o script
-  fazer esse primeiro renascimento.
-- Se o jogo não pede confirmação, apague o passo "confirmar" do
-  `config.json`.
+- O `botao_renascer.png` tem que ser o **RENASCER verde**, nunca o AINDA NÃO.
 
 ## 2. Testar os recortes
 
@@ -82,25 +79,29 @@ py auto_rebirth.py check
 ```
 
 Você tem 3 segundos para trocar para o Roblox. Ele tira um print e diz, para
-cada botão da config, se achou ou não:
+cada botão da config, se achou ou não. Com o menu aberto e o botão em AINDA
+NÃO, por exemplo:
 
 ```
 steps:
-  ACHOU      abrir menu Renascimento: formato 0.97 (min 0.85), cor 3 (max 40), melhor lugar (1853, 495)
-  nao achou  botao de renascer (liberado): formato 0.87 (min 0.85), cor 81 (max 40), melhor lugar (960, 610)
+  ...
+  nao achou  botao RENASCER (liberado): formato 0.39 (min 0.85), cor 63 (max 40), melhor lugar (354, 549)
+cleanup:
+  ACHOU      fechar menu: formato 1.00 (min 0.85), cor 0 (max 40), melhor lugar (629, 72)
 ```
 
-O `check` só vê o que está na tela no momento. Abra o menu Renascimento na mão
-e rode de novo para testar os botões de dentro dele.
+O `check` só vê o que está na tela no momento. Rode uma vez com o menu
+fechado, para testar o botão Renascimento da lateral, e outra com o menu
+aberto, para os de dentro. Com o menu aberto, os botões da lateral somem, por
+isso "abrir menu" não acha nada nesse caso.
 
 Como ler o resultado:
 
-- **"formato" abaixo do mínimo:** recorte de novo, pegando menos cenário. Ou
-  baixe o `confidence` só desse passo (ex.: `0.75`).
-- **"cor" acima do máximo com o botão liberado:** recorte de novo.
-- **"cor" acima do máximo com o botão bloqueado (cinza):** é o certo. É assim
-  que o script sabe que ainda não liberou. No exemplo acima, o formato bateu
-  (0.87) e só a cor separou o botão cinza do verde.
+- **"formato" abaixo do mínimo num botão que está na tela:** recorte de novo,
+  pegando menos cenário. Ou baixe o `confidence` só desse passo (ex.: `0.75`).
+- **"cor" acima do máximo num botão que está na tela:** recorte de novo.
+- **RENASCER "nao achou" enquanto o botão está em AINDA NÃO:** é o certo. É
+  assim que o script sabe que ainda não liberou.
 
 ## 3. Rodar
 
@@ -113,8 +114,8 @@ py auto_rebirth.py run
 [14:02:11] rodando: um ciclo a cada 30s. Para parar: Ctrl+C aqui, ou mouse num canto da tela.
 [14:02:11] verificando rebirth...
 [14:02:11]   clicando em "abrir menu Renascimento" (1853, 495)
-[14:02:15]   "botao de renascer (liberado)" nao apareceu: rebirth ainda nao liberado, tento de novo depois
-[14:02:15]   clicando em "fechar menu" (1290, 210)
+[14:02:15]   "botao RENASCER (liberado)" nao apareceu: rebirth ainda nao liberado, tento de novo depois
+[14:02:15]   clicando em "fechar menu" (1220, 205)
 [14:02:46] verificando rebirth...
 ...
 [14:09:30] rebirth feito (1 nesta sessao)
@@ -144,6 +145,17 @@ Ponha o mouse em cima do botão, anote o `x` e o `y`, e troque o passo no
 A posição fixa só vale enquanto a janela do Roblox não mudar de lugar nem de
 tamanho.
 
+## Se o jogo pedir confirmação
+
+Pelos prints, o RENASCER renasce direto. Se aparecer uma tela de
+confirmação, recorte o botão dela
+(`py auto_rebirth.py capture templates/confirmar.png`) e acrescente este
+passo depois do RENASCER, em `steps`:
+
+```json
+{ "name": "confirmar", "image": "templates/confirmar.png", "wait": 3, "optional": true }
+```
+
 ## Config
 
 | Chave | Padrão | O que faz |
@@ -167,13 +179,17 @@ Cada passo:
 | `optional` | `false` | se não aparecer, segue em vez de interromper o ciclo |
 | `confidence`, `color_tolerance` | os da config | ajuste só para este passo |
 
-Um passo obrigatório que não aparece interrompe o ciclo. É assim que o botão
-bloqueado faz o script desistir até o próximo ciclo. O `cleanup` nunca
-interrompe nada: se o botão não está lá, ele pula.
+Um passo obrigatório que não aparece interrompe o ciclo. É assim que o AINDA
+NÃO faz o script desistir até o próximo ciclo. O `cleanup` nunca interrompe
+nada: se o botão não está lá, ele pula.
+
+Além do formato, o script compara a cor média do trecho achado com a do
+recorte. Assim um botão parecido, mas de outra cor, não é confundido.
 
 ## Testes
 
-Os testes simulam a tela do jogo com OpenCV e não precisam do Roblox:
+Os testes não precisam do Roblox. Eles usam uma tela simulada com OpenCV e
+pedaços de prints reais do menu, em `tests/fixtures/`:
 
 ```powershell
 py -m unittest discover -s tests
