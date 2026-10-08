@@ -9,12 +9,12 @@
       "steps": [
         { "name": "! vermelho no Renascimento", "color": "#FF3D02", "area": [0.94, 0.40, 1.0, 0.53], "min_pixels": 150, "click": false, "wait": 2 },
         { "name": "abrir menu Renascimento", "image": "templates/renascimento.png", "wait": 3 },
-        { "name": "VOLTE PRO SEU GALINHEIRO", "image": "templates/volte_galinheiro.png", "click": false, "wait": 2 },
-        { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 2 },
+        { "name": "VOLTE PRO SEU GALINHEIRO", "image": "templates/volte_galinheiro.png", "click": false, "wait": 3, "area": [0.30, 0.45, 0.70, 0.90], "size_range": 0.1 },
+        { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 2, "area": [0.55, 0.05, 0.80, 0.40], "size_range": 0.1 },
         { "name": "botao RECUAR", "image": "templates/botao_recuar.png", "wait": 3, "confidence": 0.8, "after": 8 }
       ],
       "cleanup": [
-        { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 1 }
+        { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 1, "area": [0.55, 0.05, 0.80, 0.40], "size_range": 0.1 }
       ]
     },
     {
@@ -23,10 +23,10 @@
       "steps": [
         { "name": "! vermelho no Renascimento", "color": "#FF3D02", "area": [0.94, 0.40, 1.0, 0.53], "min_pixels": 150, "click": false, "wait": 1 },
         { "name": "abrir menu Renascimento", "image": "templates/renascimento.png", "wait": 3 },
-        { "name": "botao RENASCER (liberado)", "image": "templates/botao_renascer.png", "wait": 3 }
+        { "name": "botao RENASCER (liberado)", "image": "templates/botao_renascer.png", "wait": 3, "area": [0.30, 0.45, 0.70, 0.90], "size_range": 0.1 }
       ],
       "cleanup": [
-        { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 1 }
+        { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 1, "area": [0.55, 0.05, 0.80, 0.40], "size_range": 0.1 }
       ]
     },
     {

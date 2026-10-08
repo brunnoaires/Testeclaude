@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -26,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 from vision import (Frame, area_box, color_hsv, find_color, find_template, has_detail, load_template,
-                    parse_color, save_image)
+                    parse_color, save_image, scaled_variants)
 
 POLL_SECONDS = 0.3
 
@@ -38,7 +39,7 @@ TOP_KEYS = {'window_title', 'click_method', 'interval_seconds', 'confidence', 'c
 CLICK_METHODS = ('sendinput', 'directinput', 'pyautogui')
 TASK_KEYS = {'name', 'every_seconds', 'steps', 'cleanup'}
 STEP_KEYS = {'name', 'image', 'pos', 'key', 'color', 'pause', 'area', 'min_pixels', 'click', 'hold', 'repeat',
-             'wait', 'after', 'optional',
+             'wait', 'after', 'optional', 'size_range',
              'confidence', 'color_tolerance'}
 KEY_NAMES = {'space', 'enter', 'tab', 'esc', 'shift', 'ctrl', 'alt', 'up', 'down', 'left', 'right',
              *(f'f{i}' for i in range(1, 13))}
@@ -67,6 +68,8 @@ class Step:
     confidence: float = 0.85
     color_tolerance: float = 40.0
     template: object = None
+    size_range: float = 0.0      # procura o recorte tambem de (1-x) a (1+x) do tamanho
+    variants: object = None      # [(escala, recorte, mascara)], de scaled_variants
     mask: object = None       # pixels do botao (True) x cenario (False), da transparencia do PNG
 
 
@@ -124,7 +127,10 @@ def _parse_step(raw, base, defaults, where):
         confidence=_number(raw, 'confidence', defaults['confidence'], where, 0.0, 1.0),
         color_tolerance=_number(raw, 'color_tolerance', defaults['color_tolerance'], where, 0.0, 255.0),
         min_pixels=int(_number(raw, 'min_pixels', 100, where, 1)),
+        size_range=_number(raw, 'size_range', 0.0, where, 0.0, 0.5),
     )
+    if step.size_range and 'image' not in raw:
+        raise ConfigError(f'{where}: "size_range" so vale com "image"')
     if not isinstance(step.click, bool):
         raise ConfigError(f'{where}: "click" tem que ser true ou false')
     if not step.click and 'image' not in raw and 'color' not in raw:
@@ -167,6 +173,7 @@ def _parse_step(raw, base, defaults, where):
         if not has_detail(step.template, step.mask):
             raise ConfigError(f'{where}: {step.image.name} e uma cor lisa, sem detalhe para '
                               f'comparar. Recorte de novo pegando o texto do botao.')
+        step.variants = scaled_variants(step.template, step.mask, step.size_range)
     elif 'pos' in raw:
         pos = raw['pos']
         if (not isinstance(pos, list) or len(pos) != 2
@@ -266,15 +273,25 @@ def match_step(step, frame):
         m = find_color(img, step.color, step.min_pixels)
         point = frame.to_screen(m.center[0] + ox, m.center[1] + oy)
         return m.found, point, f'{m.count} pixels da cor na area (min {step.min_pixels}), centro {point}'
-    m = find_template(img, step.template, step.confidence, step.color_tolerance, step.mask)
+    best = None
+    for scale, template, mask in step.variants or [(1.0, step.template, step.mask)]:
+        m = find_template(img, template, step.confidence, step.color_tolerance, mask)
+        if best is None or m.found or m.score > best[0].score:
+            best = (m, scale)
+        if m.found:
+            break
+    m, scale = best
     point = frame.to_screen(m.center[0] + ox, m.center[1] + oy)
-    return m.found, point, (f'formato {m.score:.2f} (min {step.confidence:.2f}), '
+    size = f' no tamanho {scale:.0%}' if scale != 1 else ''
+    return m.found, point, (f'formato {m.score:.2f} (min {step.confidence:.2f}){size}, '
                             f'cor {m.color_diff:.0f} (max {step.color_tolerance:.0f}), melhor lugar {point}')
 
 
 class Bot:
-    def __init__(self, grab, click, press, sleep=time.sleep, clock=time.monotonic, log=log):
+    def __init__(self, grab, click, press, sleep=time.sleep, clock=time.monotonic, log=log, snapshot=None):
         self.grab = grab
+        self.snapshot = snapshot   # snapshot(tarefa, passo, frame) -> caminho do print salvo
+        self.last_frame = None
         self.click = click
         self.press = press
         self.sleep = sleep
@@ -287,7 +304,8 @@ class Bot:
         Guarda em last_detail a nota que chegou mais perto, para o log."""
         if step.pos:
             return step.pos
-        found, point, self.last_detail = match_step(step, self.grab())
+        self.last_frame = self.grab()
+        found, point, self.last_detail = match_step(step, self.last_frame)
         return point if found else None
 
     def wait_for(self, step):
@@ -331,7 +349,7 @@ class Bot:
         (menu fechado) antes da proxima tarefa.
         """
         done = True
-        for step in task.steps:
+        for i, step in enumerate(task.steps):
             if self.do_step(step):
                 continue
             why = f' ({self.last_detail})' if self.last_detail and not step.key and not step.pos else ''
@@ -339,6 +357,11 @@ class Bot:
                 self.log(f'  "{step.name}" nao apareceu{why} (opcional), seguindo')
                 continue
             self.log(f'  "{step.name}" nao apareceu{why}, fica para a proxima')
+            # Falhar no primeiro passo e o normal ("ainda nao"). Falhar depois,
+            # com o menu ja aberto por exemplo, e o que vale investigar: guarda
+            # o print que o bot viu.
+            if i > 0 and (step.image or step.color) and self.snapshot and self.last_frame is not None:
+                self.log(f'  print do que o bot viu: {self.snapshot(task, step, self.last_frame)}')
             done = False
             break
         for step in task.cleanup:
@@ -578,12 +601,32 @@ def _describe_window(title):
 # --------------------------------------------------------------------------
 # Comandos
 
-def cmd_run(cfg, once):
+def _slug(text):
+    return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')[:30]
+
+
+def make_snapshotter(folder, keep=20):
+    """Salva o print em folder e apaga os mais antigos, guardando keep."""
+    folder = Path(folder)
+
+    def snapshot(task, step, frame):
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f'{datetime.now():%Y%m%d-%H%M%S}_{_slug(task.name)}_{_slug(step.name)}.png'
+        save_image(path, frame.image)
+        for old in sorted(folder.glob('*.png'))[:-keep]:
+            old.unlink(missing_ok=True)
+        return path
+
+    return snapshot
+
+
+def cmd_run(cfg, once, debug_dir='debug'):
     import pyautogui
 
     _describe_window(cfg.window_title)
     clicker = make_clicker(cfg.click_method, park=lambda: _window_center(cfg.window_title))
-    bot = Bot(make_grabber(cfg.window_title), clicker, make_presser(), sleep=_sleep_watching_failsafe)
+    bot = Bot(make_grabber(cfg.window_title), clicker, make_presser(), sleep=_sleep_watching_failsafe,
+              snapshot=make_snapshotter(debug_dir))
     warned = []
 
     def focus():
@@ -738,7 +781,7 @@ def main(argv=None):
             if args.command == 'check':
                 cmd_check(cfg, args.delay)
             else:
-                cmd_run(cfg, args.once)
+                cmd_run(cfg, args.once, Path(args.config).resolve().parent / 'debug')
     except ConfigError as e:
         raise SystemExit(f'erro na config: {e}')
     except KeyboardInterrupt:

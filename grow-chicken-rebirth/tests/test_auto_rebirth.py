@@ -14,9 +14,9 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from auto_rebirth import Bot, ConfigError, Runner, load_config, match_step  # noqa: E402
+from auto_rebirth import Bot, ConfigError, Runner, load_config, make_snapshotter, match_step  # noqa: E402
 from vision import (Frame, area_box, find_color, find_template, load_image, load_template,  # noqa: E402
-                    parse_color, save_image)
+                    parse_color, save_image, scaled_variants)
 
 GREEN, GRAY, BLUE, RED, YELLOW, BROWN = (
     (40, 190, 60), (130, 130, 130), (200, 120, 30), (40, 40, 210), (30, 200, 230), (40, 90, 150))
@@ -298,6 +298,14 @@ class VisionTest(unittest.TestCase):
             save_image(Path(d) / 'c.png', bgra[..., :3])
             self.assertIsNone(load_template(Path(d) / 'c.png')[1])
 
+    def test_scaled_variants(self):
+        tpl = template_for('rebirth', GREEN)
+        variants = scaled_variants(tpl, None, 0.06)
+        self.assertEqual([s for s, _, _ in variants], [1.0, 0.98, 1.02, 0.96, 1.04, 0.94, 1.06])
+        self.assertIs(variants[0][1], tpl)
+        self.assertEqual(variants[-1][1].shape[1], round(tpl.shape[1] * 1.06))
+        self.assertEqual(len(scaled_variants(tpl, None, 0)), 1)
+
     def test_parse_color(self):
         self.assertEqual(parse_color('#FF3D02'), (2, 61, 255))
         self.assertEqual(parse_color('ff3d02'), (2, 61, 255))
@@ -343,24 +351,53 @@ def match(step, img):
 
 class RealGameTest(unittest.TestCase):
     """Pedacos de prints do jogo de verdade: o menu com RENASCER (verde,
-    liberado) e com AINDA NAO (marrom, bloqueado), os dois com MARCOS embaixo.
-    Usa o passo e o recorte que vao para o usuario (config.example.json)."""
+    liberado), com AINDA NAO (marrom, bloqueado) e com VOLTE PRO SEU
+    GALINHEIRO (liberado com o galo na torre), todos com MARCOS embaixo.
+    Usa o passo e o recorte que vao para o usuario (config.example.json); os
+    pedacos vao para o lugar de onde sairam, numa janela do tamanho do print,
+    porque esses passos so procuram numa area (fracao da janela)."""
+
+    WINDOW = (1005, 1919)
+    PLACE = {'menu_liberado': (620, 760), 'menu_bloqueado': (623, 761), 'menu_volte': (614, 797)}
+
+    def menu(self, name, scale=1.0):
+        """Janela com o pedaco do menu; scale != 1 simula o menu em outro
+        tamanho (janela diferente, ou botao pulsando)."""
+        img = load_image(FIXTURES / f'{name}.png')
+        if scale != 1.0:
+            img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        canvas = np.full((*self.WINDOW, 3), 110, np.uint8)
+        y, x = self.PLACE[name]
+        canvas[y:y + img.shape[0], x:x + img.shape[1]] = img
+        return Frame(canvas)
 
     def test_renascer_found_when_unlocked(self):
-        self.assertTrue(match_step(STEP_RENASCER, Frame(load_image(FIXTURES / 'menu_liberado.png')))[0])
+        self.assertTrue(match_step(STEP_RENASCER, self.menu('menu_liberado'))[0])
 
     def test_ainda_nao_rejected(self):
-        img = load_image(FIXTURES / 'menu_bloqueado.png')
-        self.assertFalse(match_step(STEP_RENASCER, Frame(img))[0])
-        self.assertLess(match(STEP_RENASCER, img).score, 0.6, 'texto diferente: o formato ja nao deveria bater')
+        self.assertFalse(match_step(STEP_RENASCER, self.menu('menu_bloqueado'))[0])
+        self.assertLess(match(STEP_RENASCER, load_image(FIXTURES / 'menu_bloqueado.png')).score, 0.6,
+                        'texto diferente: o formato ja nao deveria bater')
 
     def test_volte_galinheiro(self):
-        """menu_volte: renascimento liberado com o galo na torre."""
-        self.assertTrue(match_step(STEP_VOLTE, Frame(load_image(FIXTURES / 'menu_volte.png')))[0])
-        self.assertFalse(match_step(STEP_RENASCER, Frame(load_image(FIXTURES / 'menu_volte.png')))[0])
+        self.assertTrue(match_step(STEP_VOLTE, self.menu('menu_volte'))[0])
+        self.assertFalse(match_step(STEP_RENASCER, self.menu('menu_volte'))[0])
         for other in ('menu_liberado', 'menu_bloqueado'):   # AINDA NAO tem o mesmo marrom
             with self.subTest(other):
-                self.assertFalse(match_step(STEP_VOLTE, Frame(load_image(FIXTURES / f'{other}.png')))[0])
+                self.assertFalse(match_step(STEP_VOLTE, self.menu(other))[0])
+
+    def test_menu_buttons_in_other_sizes(self):
+        """Relato do usuario: VOLTE na tela e o log dizendo que nao apareceu.
+        Com um tamanho so, 3% de diferenca ja derrubava o VOLTE para 0.66."""
+        for scale in (0.92, 0.95, 0.97, 1.03, 1.06, 1.09):
+            with self.subTest(scale=scale):
+                self.assertFalse(match(STEP_VOLTE, self.menu('menu_volte', scale).image).found,
+                                 'so no tamanho original nao acharia')
+                self.assertTrue(match_step(STEP_VOLTE, self.menu('menu_volte', scale))[0])
+                self.assertTrue(match_step(STEP_RENASCER, self.menu('menu_liberado', scale))[0])
+                for wrong, step in (('menu_bloqueado', STEP_VOLTE), ('menu_bloqueado', STEP_RENASCER),
+                                    ('menu_liberado', STEP_VOLTE), ('menu_volte', STEP_RENASCER)):
+                    self.assertFalse(match_step(step, self.menu(wrong, scale))[0], (wrong, step.name))
 
     def test_recuar_and_torre_not_confused(self):
         """hud_recuar: o botao da torre com o galo la dentro (RECUAR)."""
@@ -611,6 +648,38 @@ class TaskTest(unittest.TestCase):
         line = next(m for m in logs if 'nao apareceu' in m)
         self.assertIn('formato', line)
         self.assertIn('(max 40)', line)
+
+    def test_snapshot_when_a_middle_step_fails(self):
+        saved = []
+        game = FakeGame(ready=False)     # abre o menu, mas o REBIRTH esta cinza
+        clock = FakeClock()
+        bot = Bot(game.grab, game.click, game.press, sleep=clock.sleep, clock=clock.now, log=lambda m: None,
+                  snapshot=lambda task, step, frame: saved.append((step.name, frame.image.shape)) or 'x.png')
+        self.assertFalse(bot.run_task(self.task))
+        self.assertEqual([n for n, _ in saved], ['rebirth'])
+
+    def test_no_snapshot_when_first_step_fails(self):
+        saved = []
+        config = copy(CONFIG)
+        config['steps'] = [{'name': 'rebirth', 'image': 'templates/rebirth.png', 'wait': 0}]
+        config['cleanup'] = []
+        self.ws.write(config)
+        clock = FakeClock()
+        bot = Bot(FakeGame().grab, FakeGame().click, FakeGame().press, sleep=clock.sleep, clock=clock.now,
+                  log=lambda m: None, snapshot=lambda *a: saved.append(a))
+        self.assertFalse(bot.run_task(self.ws.load().tasks[0]))
+        self.assertEqual(saved, [], 'falhar no primeiro passo e o normal ("ainda nao")')
+
+    def test_snapshotter_keeps_the_last_ones(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as d:
+            snap = make_snapshotter(Path(d) / 'debug', keep=3)
+            frame = Frame(np.zeros((10, 10, 3), np.uint8))
+            for i in range(5):
+                snap(SimpleNamespace(name=f'tarefa {i}'), SimpleNamespace(name='VOLTE PRO SEU GALINHEIRO'), frame)
+            files = sorted((Path(d) / 'debug').glob('*.png'))
+            self.assertEqual(len(files), 3)
+            self.assertIn('volte-pro-seu-galinheiro', files[-1].name)
 
     def test_check_only_step_absent_stops_task(self):
         config = copy(CONFIG)
@@ -985,6 +1054,23 @@ class ConfigTest(unittest.TestCase):
         config['steps'][0] = {'name': 'x', 'pause': 2, 'key': 'e'}
         self.assertConfigError(config, 'exatamente um')
 
+    def test_size_range(self):
+        config = copy(CONFIG)
+        config['steps'][1]['size_range'] = 0.1
+        self.ws.write(config)
+        step = self.ws.load().tasks[0].steps[1]
+        self.assertEqual(step.size_range, 0.1)
+        self.assertEqual(len(step.variants), 11)
+        self.assertEqual(len(self.ws.load().tasks[0].steps[0].variants), 1)
+
+    def test_bad_size_range(self):
+        config = copy(CONFIG)
+        config['steps'][1]['size_range'] = 0.9
+        self.assertConfigError(config, 'size_range')
+        config = copy(CONFIG)
+        config['steps'][0] = {'name': 'x', 'key': 'e', 'size_range': 0.1}
+        self.assertConfigError(config, '"size_range" so vale')
+
     def test_bad_click(self):
         config = copy(CONFIG)
         config['steps'][0]['click'] = 'nao'
@@ -1051,6 +1137,9 @@ class ConfigTest(unittest.TestCase):
         # de renascer cria o comedouro, espera 2 s e so entao manda para a torre
         self.assertEqual(names, ['recuar galo para renascer', 'renascer', 'melhorar comedouro',
                                  'mandar galo para a torre'])
+        self.assertEqual(STEP_VOLTE.size_range, 0.1)
+        self.assertEqual(STEP_RENASCER.size_range, 0.1)
+        self.assertIsNotNone(STEP_VOLTE.area)
         feeder = EXAMPLE_TASKS['melhorar comedouro'].steps
         self.assertEqual([s.key for s in feeder], ['e', None])
         self.assertEqual(feeder[-1].pause, 2)

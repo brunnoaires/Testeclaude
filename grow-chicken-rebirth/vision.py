@@ -135,6 +135,26 @@ def has_detail(image, mask=None):
     return len(pixels) >= 20 and float(pixels.std(axis=0).max()) >= MIN_DETAIL
 
 
+def scaled_variants(template, mask, size_range, step=0.02):
+    """O recorte em outros tamanhos, de 2 em 2%, do mais perto de 100% para o
+    mais longe: [(1.0, recorte, mascara), (0.98, ...), (1.02, ...), ...].
+
+    Serve para botao que muda de tamanho: menu que acompanha o tamanho da
+    janela, ou botao que pulsa. Com o tamanho errado, um recorte largo como o
+    VOLTE PRO SEU GALINHEIRO cai de 1.00 para 0.66 com so 3% de diferenca.
+    """
+    out = [(1.0, template, mask)]
+    for k in range(1, int(round(size_range / step)) + 1):
+        for scale in (1 - k * step, 1 + k * step):
+            w, h = max(1, round(template.shape[1] * scale)), max(1, round(template.shape[0] * scale))
+            t = cv2.resize(template, (w, h), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
+            m = None if mask is None else cv2.resize(mask.astype(np.uint8), (w, h),
+                                                     interpolation=cv2.INTER_NEAREST) > 0
+            if has_detail(t, m):
+                out.append((round(scale, 4), t, m))
+    return out
+
+
 def find_template(screen, template, confidence, color_tolerance, mask=None):
     """Melhor posicao do template na tela.
 

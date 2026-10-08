@@ -95,16 +95,16 @@ comedouro (menu fechado, galo em casa, renascimento liberado):
 recuar galo para renascer:
   ACHOU         ! vermelho no Renascimento: 916 pixels da cor na area (min 150), centro (1887, 469)
   ACHOU         abrir menu Renascimento: formato 1.00 (min 0.75), cor 0 (max 40), melhor lugar (1853, 520)
-  nao achou     VOLTE PRO SEU GALINHEIRO: formato 0.20 (min 0.75), cor 72 (max 40), melhor lugar (1069, 237)
-  nao achou     fechar menu: formato 0.45 (min 0.75), cor 69 (max 40), melhor lugar (1045, 360)
+  nao achou     VOLTE PRO SEU GALINHEIRO: formato 0.19 (min 0.75) no tamanho 102%, cor 52 (max 40), melhor lugar (1046, 619)
+  nao achou     fechar menu: formato 0.44 (min 0.75) no tamanho 108%, cor 64 (max 40), melhor lugar (1176, 361)
   nao achou     botao RECUAR: formato 0.59 (min 0.80), cor 37 (max 40), melhor lugar (126, 10)
-  nao achou     fechar menu: formato 0.45 (min 0.75), cor 69 (max 40), melhor lugar (1045, 360)
+  nao achou     fechar menu: formato 0.44 (min 0.75) no tamanho 108%, cor 64 (max 40), melhor lugar (1176, 361)
 
 renascer:
   ACHOU         ! vermelho no Renascimento: 916 pixels da cor na area (min 150), centro (1887, 469)
   ACHOU         abrir menu Renascimento: formato 1.00 (min 0.75), cor 0 (max 40), melhor lugar (1853, 520)
-  nao achou     botao RENASCER (liberado): formato 0.30 (min 0.75), cor 73 (max 40), melhor lugar (546, 576)
-  nao achou     fechar menu: formato 0.45 (min 0.75), cor 69 (max 40), melhor lugar (1045, 360)
+  nao achou     botao RENASCER (liberado): formato 0.25 (min 0.75) no tamanho 90%, cor 48 (max 40), melhor lugar (1178, 650)
+  nao achou     fechar menu: formato 0.44 (min 0.75) no tamanho 108%, cor 64 (max 40), melhor lugar (1176, 361)
 
 melhorar comedouro:
   tecla         E no comedouro: E (o check nao testa tecla)
@@ -302,6 +302,25 @@ e troque o passo no `config.json`:
 A posição fixa só vale enquanto a janela do Roblox não mudar de lugar nem de
 tamanho.
 
+## Se um botão está na tela e o log diz que "nao apareceu"
+
+A linha do log mostra, entre parênteses, a nota que chegou mais perto:
+
+```
+  "VOLTE PRO SEU GALINHEIRO" nao apareceu (formato 0.62 (min 0.75), cor 12 (max 40), melhor lugar (962, 680)), fica para a proxima
+  print do que o bot viu: C:\...\grow-chicken-rebirth\debug\20261008-153012_recuar-galo-para-renascer_volte-pro-seu-galinheiro.png
+```
+
+Quando um passo falha **no meio** de uma tarefa (o menu abriu, mas o VOLTE
+não foi achado, por exemplo), o script salva o print que ele viu na pasta
+`debug/`, que guarda os 20 mais recentes. Se isso acontecer com um botão que
+está na tela, me mande esse print junto com a linha do log.
+
+Os botões de dentro do menu (VOLTE PRO SEU GALINHEIRO, RENASCER e o X) já são
+procurados em vários tamanhos, de 90% a 110% (`"size_range": 0.1`), e só na
+região do menu (`"area"`). Assim o menu pode estar um pouco maior ou menor
+que nos recortes, por causa do tamanho da janela ou de um botão que pulsa.
+
 ## Se o ! não for achado
 
 Rode o `check` com o **!** aparecendo no jogo e olhe a linha dele:
@@ -372,6 +391,7 @@ Cada passo tem **um** destes: `image`, `color`, `pos`, `key` ou `pause`.
 | `color` | — | cor viva a procurar, `"#RRGGBB"` (ex.: a bolinha `"#FF3D02"`); exige `area` |
 | `area` | a janela toda | `[esquerda, topo, direita, baixo]` em fração da janela (0 a 1); com `image` ou `color`, só procura ali |
 | `min_pixels` | `100` | com `color`: quantos pixels da cor contam como achado |
+| `size_range` | `0` | com `image`: procura o recorte também de `1-x` a `1+x` do tamanho, de 2 em 2% (ex.: `0.1` = 90% a 110%) |
 | `click` | `true` | com `false`, só confere se o botão (ou a cor) está na tela, sem clicar |
 | `pos` | — | `[x, y]` fixo a clicar |
 | `key` | — | tecla a apertar: uma letra ou número (`"e"`), ou `space`, `enter`, `tab`, `esc`, `shift`, `ctrl`, `alt`, setas (`up`...), `f1`...`f12` |
@@ -391,6 +411,10 @@ fecha o menu se alguém o deixou aberto.
 
 ## Como ele reconhece os botões
 
+- **Tamanho:** com `size_range`, o recorte é testado em vários tamanhos, do
+  mais perto do original para o mais longe, e para no primeiro que bate.
+  Recorte largo é sensível a tamanho: o VOLTE PRO SEU GALINHEIRO, com um
+  tamanho só, caía de 1.00 para 0.66 com o menu 3% menor.
 - **Formato:** compara o recorte com cada pedaço da tela (OpenCV) e pega o
   lugar mais parecido. A nota vai de 0 a 1.
 - **Cor:** a cor média do trecho achado tem que bater com a do recorte. É o

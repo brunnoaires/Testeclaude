@@ -1,2 +1,5 @@
 __pycache__/
 config.json
+
+# prints salvos quando um passo falha no meio de uma tarefa
+debug/
