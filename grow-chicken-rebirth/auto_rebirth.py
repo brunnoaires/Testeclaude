@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-auto_rebirth — rebirth automatico no Grow a Chicken Fighter (Roblox).
+auto_rebirth — ciclo automatico no Grow a Chicken Fighter (Roblox):
+melhorar comedouro, mandar o galo para a torre e renascer.
 
 Funciona olhando a tela, como voce faria: procura os botoes que voce recortou
-em templates/ e clica neles na ordem da config. Nao injeta script no Roblox
-nem le memoria do jogo.
+em templates/ e clica neles, ou aperta teclas, conforme as tarefas da config.
+Nao injeta script no Roblox nem le memoria do jogo.
 
-  python auto_rebirth.py capture templates/abrir_menu.png   recorta um botao
+  python auto_rebirth.py capture templates/botao_torre.png  recorta um botao
   python auto_rebirth.py check                              testa os recortes
-  python auto_rebirth.py run                                roda o loop
+  python auto_rebirth.py run                                roda as tarefas
   python auto_rebirth.py pos                                mostra a posicao do mouse
 
 Para parar: Ctrl+C no terminal, ou leve o mouse para um canto da tela.
@@ -27,8 +28,12 @@ from vision import Frame, find_template, has_detail, load_image, save_image
 
 POLL_SECONDS = 0.3
 
-TOP_KEYS = {'window_title', 'interval_seconds', 'confidence', 'color_tolerance', 'steps', 'cleanup'}
-STEP_KEYS = {'name', 'image', 'pos', 'wait', 'after', 'optional', 'confidence', 'color_tolerance'}
+TOP_KEYS = {'window_title', 'interval_seconds', 'confidence', 'color_tolerance', 'tasks', 'steps', 'cleanup'}
+TASK_KEYS = {'name', 'every_seconds', 'steps', 'cleanup'}
+STEP_KEYS = {'name', 'image', 'pos', 'key', 'hold', 'repeat', 'wait', 'after', 'optional',
+             'confidence', 'color_tolerance'}
+KEY_NAMES = {'space', 'enter', 'tab', 'esc', 'shift', 'ctrl', 'alt', 'up', 'down', 'left', 'right',
+             *(f'f{i}' for i in range(1, 13))}
 
 
 class ConfigError(Exception):
@@ -40,8 +45,11 @@ class Step:
     name: str
     image: Path | None = None
     pos: tuple | None = None
+    key: str | None = None
+    hold: float = 0.0         # segundos segurando a tecla
+    repeat: int = 1           # quantas vezes clica / aperta
     wait: float = 3.0         # segundos esperando o botao aparecer
-    after: float = 0.8        # pausa depois do clique
+    after: float = 0.8        # pausa depois de cada clique / tecla
     optional: bool = False    # se nao aparecer, segue para o proximo passo
     confidence: float = 0.85
     color_tolerance: float = 40.0
@@ -49,11 +57,17 @@ class Step:
 
 
 @dataclass
+class Task:
+    name: str
+    every_seconds: float
+    steps: list
+    cleanup: list = field(default_factory=list)
+
+
+@dataclass
 class Config:
     window_title: str = 'Roblox'
-    interval_seconds: float = 30.0
-    steps: list = field(default_factory=list)
-    cleanup: list = field(default_factory=list)
+    tasks: list = field(default_factory=list)
 
 
 def log(msg):
@@ -81,11 +95,13 @@ def _parse_step(raw, base, defaults, where):
         raise ConfigError(f'{where}: chave desconhecida {", ".join(sorted(unknown))}')
     name = str(raw.get('name') or where)
     where = f'{where} ("{name}")'
-    if ('image' in raw) == ('pos' in raw):
-        raise ConfigError(f'{where}: use "image" ou "pos" (exatamente um dos dois)')
+    if sum(k in raw for k in ('image', 'pos', 'key')) != 1:
+        raise ConfigError(f'{where}: use "image", "pos" ou "key" (exatamente um)')
 
     step = Step(
         name=name,
+        hold=_number(raw, 'hold', 0.0, where),
+        repeat=int(_number(raw, 'repeat', 1, where, 1, 100)),
         wait=_number(raw, 'wait', 3.0, where),
         after=_number(raw, 'after', 0.8, where),
         optional=bool(raw.get('optional', False)),
@@ -106,13 +122,41 @@ def _parse_step(raw, base, defaults, where):
         if not has_detail(step.template):
             raise ConfigError(f'{where}: {step.image.name} e uma cor lisa, sem detalhe para '
                               f'comparar. Recorte de novo pegando o texto do botao.')
-    else:
+    elif 'pos' in raw:
         pos = raw['pos']
         if (not isinstance(pos, list) or len(pos) != 2
                 or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in pos)):
             raise ConfigError(f'{where}: "pos" tem que ser [x, y]')
         step.pos = (int(pos[0]), int(pos[1]))
+    else:
+        key = raw['key']
+        if not isinstance(key, str) or not (len(key) == 1 and key.isalnum() or key.lower() in KEY_NAMES):
+            raise ConfigError(f'{where}: "key" tem que ser uma letra ou numero ("e"), ou um destes: '
+                              f'{", ".join(sorted(KEY_NAMES))}')
+        step.key = key.lower()
     return step
+
+
+def _parse_task(raw, base, defaults, where):
+    if not isinstance(raw, dict):
+        raise ConfigError(f'{where}: cada tarefa tem que ser um objeto {{ ... }}')
+    unknown = set(raw) - TASK_KEYS
+    if unknown:
+        raise ConfigError(f'{where}: chave desconhecida {", ".join(sorted(unknown))}')
+    name = str(raw.get('name') or where)
+    where = f'{where} ("{name}")'
+    steps = raw.get('steps') or []
+    cleanup = raw.get('cleanup') or []
+    if not isinstance(steps, list) or not steps:
+        raise ConfigError(f'{where}: precisa de uma lista "steps" com pelo menos um passo')
+    if not isinstance(cleanup, list):
+        raise ConfigError(f'{where}: "cleanup" tem que ser uma lista')
+    return Task(
+        name=name,
+        every_seconds=_number(raw, 'every_seconds', defaults['interval_seconds'], where, 1.0),
+        steps=[_parse_step(s, base, defaults, f'{where} steps[{i}]') for i, s in enumerate(steps)],
+        cleanup=[_parse_step(s, base, defaults, f'{where} cleanup[{i}]') for i, s in enumerate(cleanup)],
+    )
 
 
 def load_config(path):
@@ -131,32 +175,35 @@ def load_config(path):
         raise ConfigError(f'chave desconhecida na config: {", ".join(sorted(unknown))}')
 
     defaults = {
+        'interval_seconds': _number(raw, 'interval_seconds', 30.0, 'config', 1.0),
         'confidence': _number(raw, 'confidence', 0.85, 'config', 0.0, 1.0),
         'color_tolerance': _number(raw, 'color_tolerance', 40.0, 'config', 0.0, 255.0),
     }
     base = path.resolve().parent
-    steps = raw.get('steps') or []
-    cleanup = raw.get('cleanup') or []
-    if not isinstance(steps, list) or not steps:
-        raise ConfigError('a config precisa de uma lista "steps" com pelo menos um passo')
-    if not isinstance(cleanup, list):
-        raise ConfigError('"cleanup" tem que ser uma lista')
+
+    if 'tasks' in raw:
+        if 'steps' in raw or 'cleanup' in raw:
+            raise ConfigError('use "tasks" ou "steps"/"cleanup" no topo da config, nao os dois')
+        tasks = raw['tasks']
+        if not isinstance(tasks, list) or not tasks:
+            raise ConfigError('"tasks" tem que ser uma lista com pelo menos uma tarefa')
+    else:
+        # Formato curto: uma tarefa so, com os passos no topo da config.
+        tasks = [{'name': 'renascer', 'steps': raw.get('steps'), 'cleanup': raw.get('cleanup', [])}]
     return Config(
         window_title=str(raw.get('window_title', 'Roblox')),
-        interval_seconds=_number(raw, 'interval_seconds', 30.0, 'config', 1.0),
-        steps=[_parse_step(s, base, defaults, f'steps[{i}]') for i, s in enumerate(steps)],
-        cleanup=[_parse_step(s, base, defaults, f'cleanup[{i}]') for i, s in enumerate(cleanup)],
+        tasks=[_parse_task(t, base, defaults, f'tasks[{i}]') for i, t in enumerate(tasks)],
     )
 
 
 # --------------------------------------------------------------------------
-# Logica do ciclo (sem dependencia de tela/mouse, testavel)
+# Logica (sem dependencia de tela/mouse/teclado, testavel)
 
 class Bot:
-    def __init__(self, cfg, grab, click, sleep=time.sleep, clock=time.monotonic, log=log):
-        self.cfg = cfg
+    def __init__(self, grab, click, press, sleep=time.sleep, clock=time.monotonic, log=log):
         self.grab = grab
         self.click = click
+        self.press = press
         self.sleep = sleep
         self.clock = clock
         self.log = log
@@ -178,37 +225,76 @@ class Bot:
             self.sleep(POLL_SECONDS)
 
     def do_step(self, step):
+        times = f' x{step.repeat}' if step.repeat > 1 else ''
+        if step.key:
+            self.log(f'  apertando {step.key.upper()}{times} ({step.name})')
+            for _ in range(step.repeat):
+                self.press(step.key, step.hold)
+                self.sleep(step.after)
+            return True
         point = self.wait_for(step)
         if point is None:
             return False
-        self.log(f'  clicando em "{step.name}" {point}')
-        self.click(*point)
-        self.sleep(step.after)
+        self.log(f'  clicando em "{step.name}" {point}{times}')
+        for _ in range(step.repeat):
+            self.click(*point)
+            self.sleep(step.after)
         return True
 
-    def cycle(self):
-        """Um ciclo de rebirth. True se todos os passos obrigatorios foram clicados.
+    def run_task(self, task):
+        """Roda uma tarefa. True se todos os passos obrigatorios foram feitos.
 
-        O cleanup roda sempre, completo ou nao, para o jogo voltar ao estado de
-        partida (menu fechado) antes do proximo ciclo.
+        Um passo obrigatorio que nao aparece interrompe a tarefa (ex.: RENASCER
+        ainda em AINDA NAO, ou TORRE trocado por RECUAR porque o galo ja esta
+        la). O cleanup roda sempre, para o jogo voltar ao estado de partida
+        (menu fechado) antes da proxima tarefa.
         """
         done = True
-        for step in self.cfg.steps:
+        for step in task.steps:
             if self.do_step(step):
                 continue
             if step.optional:
                 self.log(f'  "{step.name}" nao apareceu (opcional), seguindo')
                 continue
-            self.log(f'  "{step.name}" nao apareceu: rebirth ainda nao liberado, tento de novo depois')
+            self.log(f'  "{step.name}" nao apareceu, fica para a proxima')
             done = False
             break
-        for step in self.cfg.cleanup:
+        for step in task.cleanup:
             self.do_step(step)
         return done
 
 
+class Runner:
+    """Roda cada tarefa no seu intervalo, uma de cada vez, na ordem da config."""
+
+    def __init__(self, cfg, bot, clock=time.monotonic, focus=lambda: None, log=log):
+        self.cfg = cfg
+        self.bot = bot
+        self.clock = clock
+        self.focus = focus
+        self.log = log
+        self.next_run = [0.0] * len(cfg.tasks)
+        self.done = [0] * len(cfg.tasks)
+
+    def tick(self):
+        """Roda as tarefas vencidas. Devolve quantos segundos esperar ate a proxima."""
+        for i, task in enumerate(self.cfg.tasks):
+            if self.clock() < self.next_run[i]:
+                continue
+            self.focus()
+            self.log(f'{task.name}')
+            if self.bot.run_task(task):
+                self.done[i] += 1
+                self.log(f'"{task.name}" feito ({self.done[i]}x nesta sessao)')
+            self.next_run[i] = self.clock() + task.every_seconds
+        return max(0.2, min(self.next_run) - self.clock())
+
+    def summary(self):
+        return ', '.join(f'{t.name}: {n}x' for t, n in zip(self.cfg.tasks, self.done))
+
+
 # --------------------------------------------------------------------------
-# Tela, mouse e janela (so roda na maquina com o Roblox)
+# Tela, mouse, teclado e janela (so roda na maquina com o Roblox)
 
 def _dpi_aware():
     # Sem isso, com escala de 125%/150% do Windows a captura e o mouse usam
@@ -282,6 +368,27 @@ def make_clicker():
     return click
 
 
+def make_presser():
+    import pyautogui
+
+    if sys.platform == 'win32':
+        # Jogos em DirectX, o Roblox incluso, costumam ignorar a tecla virtual
+        # que o pyautogui manda; o pydirectinput manda scan code, como o
+        # teclado de verdade.
+        import pydirectinput as keys
+        keys.FAILSAFE = False  # o failsafe vale pelo do pyautogui, abaixo
+    else:
+        keys = pyautogui
+
+    def press(key, hold):
+        pyautogui.failSafeCheck()  # mouse no canto para tambem as tarefas so de tecla
+        keys.keyDown(key)
+        time.sleep(max(hold, 0.05))
+        keys.keyUp(key)
+
+    return press
+
+
 def _focus(title):
     win = _find_window(title)
     if win is None:
@@ -309,26 +416,23 @@ def cmd_run(cfg, once):
     import pyautogui
 
     _describe_window(cfg.window_title)
-    bot = Bot(cfg, make_grabber(cfg.window_title), make_clicker())
-    log(f'rodando: um ciclo a cada {cfg.interval_seconds:g}s. '
-        f'Para parar: Ctrl+C aqui, ou mouse num canto da tela.')
-    total = 0
+    bot = Bot(make_grabber(cfg.window_title), make_clicker(), make_presser())
+    runner = Runner(cfg, bot, focus=lambda: _focus(cfg.window_title))
+    for task in cfg.tasks:
+        log(f'tarefa "{task.name}": a cada {task.every_seconds:g}s')
+    log('rodando. Para parar: Ctrl+C aqui, ou mouse num canto da tela.')
     try:
         while True:
-            _focus(cfg.window_title)
-            log('verificando rebirth...')
-            if bot.cycle():
-                total += 1
-                log(f'rebirth feito ({total} nesta sessao)')
+            wait = runner.tick()
             if once:
                 break
-            time.sleep(cfg.interval_seconds)
+            time.sleep(wait)
     except KeyboardInterrupt:
         print()
     except pyautogui.FailSafeException:
         print()
         log('mouse no canto da tela: parado pelo failsafe')
-    log(f'fim. Rebirths nesta sessao: {total}')
+    log(f'fim. {runner.summary()}')
 
 
 def _countdown(msg, seconds):
@@ -344,16 +448,19 @@ def cmd_check(cfg, delay):
     _countdown('Deixe o Roblox na frente, capturando em', delay)
     frame = grab()
     h, w = frame.image.shape[:2]
-    print(f'Captura: {w}x{h} a partir de ({frame.left}, {frame.top})\n')
-    for group, steps in (('steps', cfg.steps), ('cleanup', cfg.cleanup)):
-        print(f'{group}:')
-        for step in steps:
+    print(f'Captura: {w}x{h} a partir de ({frame.left}, {frame.top})')
+    for task in cfg.tasks:
+        print(f'\n{task.name}:')
+        for step in task.steps + task.cleanup:
+            if step.key:
+                print(f'  tecla         {step.name}: {step.key.upper()} (o check nao testa tecla)')
+                continue
             if step.pos:
                 print(f'  posicao fixa  {step.name}: {step.pos}')
                 continue
             m = find_template(frame.image, step.template, step.confidence, step.color_tolerance)
             status = 'ACHOU    ' if m.found else 'nao achou'
-            print(f'  {status}  {step.name}: formato {m.score:.2f} (min {step.confidence:.2f}), '
+            print(f'  {status}     {step.name}: formato {m.score:.2f} (min {step.confidence:.2f}), '
                   f'cor {m.color_diff:.0f} (max {step.color_tolerance:.0f}), '
                   f'melhor lugar {frame.to_screen(*m.center)}')
     print('\nSo aparece o que esta na tela agora: abra o menu Renascimento na mao '
@@ -406,14 +513,14 @@ def main(argv=None):
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument('-c', '--config', default='config.json', help='padrao: config.json')
 
-    parser = argparse.ArgumentParser(description='Rebirth automatico no Grow a Chicken Fighter (Roblox).')
+    parser = argparse.ArgumentParser(description='Ciclo automatico no Grow a Chicken Fighter (Roblox).')
     sub = parser.add_subparsers(dest='command', required=True)
-    p = sub.add_parser('run', parents=[common], help='roda o loop de rebirth')
-    p.add_argument('--once', action='store_true', help='faz um ciclo so e sai')
+    p = sub.add_parser('run', parents=[common], help='roda as tarefas')
+    p.add_argument('--once', action='store_true', help='roda cada tarefa uma vez e sai')
     p = sub.add_parser('check', parents=[common], help='mostra se cada botao da config esta sendo achado na tela')
     p.add_argument('--delay', type=int, default=3, help='segundos antes de capturar (padrao 3)')
     p = sub.add_parser('capture', help='recorta um botao da tela para templates/')
-    p.add_argument('out', help='arquivo de saida, ex.: templates/botao_rebirth.png')
+    p.add_argument('out', help='arquivo de saida, ex.: templates/botao_torre.png')
     p.add_argument('--delay', type=int, default=4, help='segundos para posicionar o mouse (padrao 4)')
     sub.add_parser('pos', help='mostra a posicao do mouse')
     args = parser.parse_args(argv)
