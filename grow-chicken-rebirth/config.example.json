@@ -4,10 +4,15 @@
   "color_tolerance": 40,
   "tasks": [
     {
-      "name": "melhorar comedouro",
+      "name": "renascer",
       "every_seconds": 10,
       "steps": [
-        { "name": "E no comedouro", "key": "e", "repeat": 3, "after": 0.5 }
+        { "name": "! vermelho no Renascimento", "color": "#FF3D02", "area": [0.94, 0.40, 1.0, 0.53], "min_pixels": 150, "click": false, "wait": 2 },
+        { "name": "abrir menu Renascimento", "image": "templates/renascimento.png", "wait": 3 },
+        { "name": "botao RENASCER (liberado)", "image": "templates/botao_renascer.png", "wait": 3 }
+      ],
+      "cleanup": [
+        { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 1 }
       ]
     },
     {
@@ -18,15 +23,10 @@
       ]
     },
     {
-      "name": "renascer",
-      "every_seconds": 20,
+      "name": "melhorar comedouro",
+      "every_seconds": 10,
       "steps": [
-        { "name": "! vermelho no Renascimento", "color": "#FF3D02", "area": [0.94, 0.40, 1.0, 0.53], "min_pixels": 150, "click": false, "wait": 2 },
-        { "name": "abrir menu Renascimento", "image": "templates/renascimento.png", "wait": 3 },
-        { "name": "botao RENASCER (liberado)", "image": "templates/botao_renascer.png", "wait": 3 }
-      ],
-      "cleanup": [
-        { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 1 }
+        { "name": "E no comedouro", "key": "e", "repeat": 3, "after": 0.5 }
       ]
     }
   ]

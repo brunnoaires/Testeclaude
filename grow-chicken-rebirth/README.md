@@ -3,14 +3,18 @@
 Ciclo automático no **Grow a Chicken Fighter**, do Roblox: melhora o
 comedouro, manda o galo para a torre e renasce quando libera.
 
-O script olha a tela como você olharia e roda três **tarefas**, cada uma no
-seu intervalo:
+O script olha a tela como você olharia e roda três **tarefas**, nesta ordem,
+a cada 10 segundos:
 
-| Tarefa | Padrão | O que faz |
+| Ordem | Tarefa | O que faz |
 |---|---|---|
-| melhorar comedouro | a cada 10 s | aperta **E** 3 vezes; o boneco tem que estar parado ao lado do comedouro |
-| mandar galo para a torre | a cada 10 s | se o botão de baixo mostra **TORRE**, clica; se mostra **RECUAR**, o galo já está lá e não faz nada |
-| renascer | a cada 20 s | olha se o botão **Renascimento** está com o **!** vermelho; só então abre o menu, clica em **RENASCER** e fecha |
+| 1 | renascer | olha se o botão **Renascimento** está com o **!** vermelho; só então abre o menu, clica em **RENASCER** e fecha |
+| 2 | mandar galo para a torre | se o botão de baixo mostra **TORRE**, clica; se mostra **RECUAR**, o galo já está lá e não faz nada |
+| 3 | melhorar comedouro | aperta **E** 3 vezes; o boneco tem que estar parado ao lado do comedouro |
+
+O renascimento é conferido antes da torre: com o **!** na tela, ele renasce
+em vez de mandar o galo à toa, e logo depois de renascer o galo novo já vai
+para a torre.
 
 Com o comedouro subindo, o galo ganha nível. A cada ida à torre ele vai mais
 longe, até passar do andar exigido. Aí aparece o **!** no Renascimento, o
@@ -79,17 +83,17 @@ cada botão da config, se achou ou não. Esta é a saída com o seu print do
 comedouro (menu fechado, galo em casa, renascimento liberado):
 
 ```
-melhorar comedouro:
-  tecla         E no comedouro: E (o check nao testa tecla)
-
-mandar galo para a torre:
-  ACHOU         botao TORRE: formato 1.00 (min 0.90), cor 0 (max 40), melhor lugar (960, 992)
-
 renascer:
   ACHOU         ! vermelho no Renascimento: 916 pixels da cor na area (min 150), centro (1887, 469)
   ACHOU         abrir menu Renascimento: formato 1.00 (min 0.85), cor 0 (max 40), melhor lugar (1853, 520)
   nao achou     botao RENASCER (liberado): formato 0.30 (min 0.85), cor 73 (max 40), melhor lugar (546, 576)
   nao achou     fechar menu: formato 0.45 (min 0.85), cor 69 (max 40), melhor lugar (1045, 360)
+
+mandar galo para a torre:
+  ACHOU         botao TORRE: formato 1.00 (min 0.90), cor 0 (max 40), melhor lugar (960, 992)
+
+melhorar comedouro:
+  tecla         E no comedouro: E (o check nao testa tecla)
 ```
 
 O `check` só vê o que está na tela no momento. Rode algumas vezes:
@@ -123,23 +127,22 @@ py auto_rebirth.py run
 
 ```
 [14:02:11] janela "Roblox" encontrada
-[14:02:11] tarefa "melhorar comedouro": a cada 10s
+[14:02:11] tarefa "renascer": a cada 10s
 [14:02:11] tarefa "mandar galo para a torre": a cada 10s
-[14:02:11] tarefa "renascer": a cada 20s
+[14:02:11] tarefa "melhorar comedouro": a cada 10s
 [14:02:11] rodando. Para parar: Ctrl+C aqui, ou mouse num canto da tela.
-[14:02:11] melhorar comedouro
-[14:02:11]   apertando E x3 (E no comedouro)
-[14:02:13] "melhorar comedouro" feito (1x nesta sessao)
-[14:02:13] mandar galo para a torre
-[14:02:13]   clicando em "botao TORRE" (960, 992)
-[14:02:14] "mandar galo para a torre" feito (1x nesta sessao)
-[14:02:14] renascer
-[14:02:16]   "! vermelho no Renascimento" nao apareceu, fica para a proxima
-[14:02:24] melhorar comedouro
-[14:02:24]   apertando E x3 (E no comedouro)
-[14:02:26] "melhorar comedouro" feito (2x nesta sessao)
-[14:02:26] mandar galo para a torre
-[14:02:26]   "botao TORRE" nao apareceu, fica para a proxima
+[14:02:11] renascer
+[14:02:13]   "! vermelho no Renascimento" nao apareceu, fica para a proxima
+[14:02:14] mandar galo para a torre
+[14:02:14]   clicando em "botao TORRE" (960, 992)
+[14:02:15] "mandar galo para a torre" feito (1x nesta sessao)
+[14:02:15] melhorar comedouro
+[14:02:15]   apertando E x3 (E no comedouro)
+[14:02:17] "melhorar comedouro" feito (1x nesta sessao)
+[14:02:24] renascer
+[14:02:26]   "! vermelho no Renascimento" nao apareceu, fica para a proxima
+[14:02:27] mandar galo para a torre
+[14:02:27]   "botao TORRE" nao apareceu, fica para a proxima
 ...
 [14:31:40] renascer
 [14:31:40]   "! vermelho no Renascimento" esta na tela (1887, 469)
@@ -147,6 +150,8 @@ py auto_rebirth.py run
 [14:31:43]   clicando em "botao RENASCER (liberado)" (960, 682)
 [14:31:45]   clicando em "fechar menu" (1220, 205)
 [14:31:46] "renascer" feito (1x nesta sessao)
+[14:31:46] mandar galo para a torre
+[14:31:46]   clicando em "botao TORRE" (960, 992)
 ```
 
 As linhas "nao apareceu, fica para a proxima" são normais: o **!** ainda não
@@ -195,10 +200,13 @@ frente só serve para trazê-la para a frente, e o jogo não vê esse clique.
 
 ## Ajustando o ritmo
 
-Os intervalos ficam em `every_seconds`, no `config.json`:
+Os intervalos ficam em `every_seconds`, no `config.json`. As tarefas rodam
+na ordem em que aparecem lá; deixe "renascer" e "mandar galo para a torre"
+com o mesmo intervalo para a conferência do renascimento continuar vindo logo
+antes de cada ida à torre.
 
 - **O galo vai para a torre fraco demais e perde cedo:** aumente o intervalo
-  da torre (ex.: `300` para 5 minutos). Assim ele passa mais tempo subindo de
+  das duas (ex.: `300` para 5 minutos). Assim ele passa mais tempo subindo de
   nível entre uma ida e outra.
 - **Dinheiro sobrando:** diminua o intervalo do comedouro ou aumente o
   `repeat` do E.

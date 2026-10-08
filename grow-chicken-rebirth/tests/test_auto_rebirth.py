@@ -295,8 +295,9 @@ FIXTURES = Path(__file__).resolve().parent / 'fixtures'
 
 
 EXAMPLE = load_config(Path(__file__).resolve().parent.parent / 'config.example.json')
-STEP_TORRE = EXAMPLE.tasks[1].steps[0]
-STEP_ALERTA, STEP_RENASCIMENTO, STEP_RENASCER = EXAMPLE.tasks[2].steps
+EXAMPLE_TASKS = {t.name: t for t in EXAMPLE.tasks}
+STEP_TORRE = EXAMPLE_TASKS['mandar galo para a torre'].steps[0]
+STEP_ALERTA, STEP_RENASCIMENTO, STEP_RENASCER = EXAMPLE_TASKS['renascer'].steps
 
 
 def match(step, img):
@@ -606,6 +607,27 @@ class RunnerTest(unittest.TestCase):
         self.run_for(FakeGame(ready=False), 1, focus=lambda: calls.append(1))
         self.assertEqual(len(calls), 3)
 
+    def test_rebirth_checked_right_before_each_tower_run(self):
+        config = copy(TASKS_CONFIG)
+        by_name = {t['name']: t for t in config['tasks']}
+        config['tasks'] = [by_name['renascer'], by_name['torre'], by_name['comedouro']]
+        for t in config['tasks']:
+            t['every_seconds'] = 10
+        self.ws.write(config)
+        cfg = self.ws.load()
+        clock = FakeClock()
+        logs = []
+        game = FakeGame(ready=False)
+        runner = Runner(cfg, make_bot(game, clock), clock=clock.now, log=logs.append)
+        while clock.t < 60:
+            clock.sleep(runner.tick())
+            game.in_tower = False   # o galo volta logo: TORRE aparece de novo
+        runs = [m for m in logs if m in ('renascer', 'torre', 'comedouro')]
+        self.assertGreaterEqual(runs.count('torre'), 4)
+        for i, name in enumerate(runs):
+            if name == 'torre':
+                self.assertTrue(i > 0 and runs[i - 1] == 'renascer', runs)
+
     def test_tick_returns_time_until_next_task(self):
         clock = FakeClock()
         runner = Runner(self.cfg, make_bot(FakeGame(ready=False), clock), clock=clock.now, log=lambda m: None)
@@ -809,8 +831,11 @@ class ConfigTest(unittest.TestCase):
         # Todos os recortes do exemplo vem prontos em templates/.
         cfg = load_config(Path(__file__).resolve().parent.parent / 'config.example.json')
         names = [t.name for t in cfg.tasks]
-        self.assertEqual(names, ['melhorar comedouro', 'mandar galo para a torre', 'renascer'])
-        alert = cfg.tasks[2].steps[0]
+        # renascer vem antes da torre: com o ! na tela, renasce em vez de mandar
+        # o galo a toa; logo depois de renascer, o galo novo ja vai para a torre
+        self.assertEqual(names, ['renascer', 'mandar galo para a torre', 'melhorar comedouro'])
+        self.assertEqual({t.every_seconds for t in cfg.tasks}, {10}, 'mesmo ritmo: a ordem vale em toda rodada')
+        alert = cfg.tasks[0].steps[0]
         self.assertFalse(alert.click)
         self.assertEqual(alert.color, parse_color('#FF3D02'))
         self.assertIsNotNone(alert.area)
