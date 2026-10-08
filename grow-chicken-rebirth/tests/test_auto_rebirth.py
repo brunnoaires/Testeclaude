@@ -14,8 +14,9 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from auto_rebirth import Bot, ConfigError, Runner, load_config  # noqa: E402
-from vision import Frame, find_template, load_image, load_template, save_image  # noqa: E402
+from auto_rebirth import Bot, ConfigError, Runner, load_config, match_step  # noqa: E402
+from vision import (Frame, area_box, find_color, find_template, load_image, load_template,  # noqa: E402
+                    parse_color, save_image)
 
 GREEN, GRAY, BLUE, RED, YELLOW, BROWN = (
     (40, 190, 60), (130, 130, 130), (200, 120, 30), (40, 40, 210), (30, 200, 230), (40, 90, 150))
@@ -249,6 +250,26 @@ class VisionTest(unittest.TestCase):
             save_image(Path(d) / 'c.png', bgra[..., :3])
             self.assertIsNone(load_template(Path(d) / 'c.png')[1])
 
+    def test_parse_color(self):
+        self.assertEqual(parse_color('#FF3D02'), (2, 61, 255))
+        self.assertEqual(parse_color('ff3d02'), (2, 61, 255))
+        with self.assertRaises(ValueError):
+            parse_color('#FFF')
+
+    def test_area_box(self):
+        self.assertEqual(area_box((100, 200, 3), (0.5, 0.25, 1.0, 0.75)), (100, 25, 200, 75))
+
+    def test_find_color(self):
+        img = np.full((100, 100, 3), 120, np.uint8)
+        cv2.circle(img, (70, 30), 10, (2, 61, 255), -1)       # bolinha vermelha
+        m = find_color(img, (2, 61, 255), 100)
+        self.assertTrue(m.found)
+        self.assertLessEqual(abs(m.center[0] - 70) + abs(m.center[1] - 30), 2)
+        darker = (img.astype(float) * 0.6).astype(np.uint8)    # mesmo tom, mais escuro
+        self.assertTrue(find_color(darker, (2, 61, 255), 100).found)
+        self.assertFalse(find_color(img, (2, 61, 255), 1000).found, 'poucos pixels')
+        self.assertFalse(find_color(img, (255, 61, 2), 100).found, 'azul nao e vermelho')
+
     def test_tower_not_confused_with_retreat(self):
         game = FakeGame()
         game.in_tower = True
@@ -286,27 +307,76 @@ class RealHudTest(unittest.TestCase):
       edicao (inpaint) - nao e print real, mas o resto do botao e.
     hud_direita_fundo_trocado: cenario atras do botao trocado por grama,
       como se a camera tivesse girado.
-    hud_guilda: Guilda com a bolinha "1", mesmo estilo de bolinha do !.
+    hud_guilda: Guilda com a bolinha "1", mesmo estilo e mesma cor do !.
     hud_baixo: CHAMAR, TORRE e CAOS PROFISSIONAL.
+
+    O ! e procurado pela cor, com o passo exatamente como esta no
+    config.example.json. Para a area (fracao da janela) valer, os pedacos sao
+    colados numa janela do tamanho do print, nos lugares de onde sairam.
     """
+
+    WINDOW = (1014, 1919)       # altura x largura do print original
+    HUD_AT = (340, 1760)        # canto da coluna da direita no print
+    GUILD_AT = (530, 240)       # canto do pedaco da Guilda no print
+    BADGE = (112, 149, 104, 155)  # bolinha do ! dentro de hud_direita (y1, y2, x1, x2)
 
     def find(self, template, screen, confidence=0.85):
         img, mask = load_template(FIXTURES / f'{template}.png')
         return find_template(load_image(FIXTURES / f'{screen}.png'), img, confidence, 40, mask)
 
+    @classmethod
+    def setUpClass(cls):
+        cfg = load_config(Path(__file__).resolve().parent.parent / 'config.example.json')
+        cls.alert = cfg.tasks[2].steps[0]
+
+    def window(self, hud, guild=None):
+        canvas = np.full((*self.WINDOW, 3), 110, np.uint8)
+        for img, (y, x) in ((hud, self.HUD_AT), (guild, self.GUILD_AT)):
+            if img is not None:
+                canvas[y:y + img.shape[0], x:x + img.shape[1]] = img
+        return Frame(canvas)
+
+    def animated(self, scale=1.0, angle=0.0, dy=0, gain=1.0):
+        """Bolinha do print transformada (pulsando, girando, pulando, mais
+        escura) e colada no print sem o !."""
+        src = load_image(FIXTURES / 'hud_direita.png')
+        out = load_image(FIXTURES / 'hud_direita_sem_alerta.png')
+        y1, y2, x1, x2 = self.BADGE
+        layer = np.zeros_like(src)
+        layer[y1:y2, x1:x2] = src[y1:y2, x1:x2]
+        M = cv2.getRotationMatrix2D(((x1 + x2) / 2, (y1 + y2) / 2), angle, scale)
+        M[1, 2] += dy
+        warped = cv2.warpAffine(layer, M, (src.shape[1], src.shape[0]))
+        warped = np.clip(warped.astype(float) * gain, 0, 255).astype(np.uint8)
+        painted = warped.any(axis=2)
+        out[painted] = warped[painted]
+        return out
+
     def test_alert_found(self):
-        self.assertTrue(self.find('renascimento_alerta', 'hud_direita').found)
+        found, point, _ = match_step(self.alert, self.window(load_image(FIXTURES / 'hud_direita.png')))
+        self.assertTrue(found)
+        # centro da mancha vermelha cai na bolinha (no print: x 1864-1915, y 452-489)
+        self.assertTrue(1864 <= point[0] <= 1915 and 452 <= point[1] <= 489, point)
 
     def test_alert_found_with_other_background(self):
-        m = self.find('renascimento_alerta', 'hud_direita_fundo_trocado')
-        self.assertTrue(m.found)
-        self.assertGreater(m.score, 0.95, 'a mascara ignora o cenario')
+        hud = load_image(FIXTURES / 'hud_direita_fundo_trocado.png')
+        self.assertTrue(match_step(self.alert, self.window(hud))[0])
 
     def test_alert_absent(self):
-        self.assertFalse(self.find('renascimento_alerta', 'hud_direita_sem_alerta').found)
+        hud = load_image(FIXTURES / 'hud_direita_sem_alerta.png')
+        self.assertFalse(match_step(self.alert, self.window(hud))[0])
 
-    def test_alert_not_confused_with_guild_badge(self):
-        self.assertFalse(self.find('renascimento_alerta', 'hud_guilda').found)
+    def test_alert_ignores_guild_badge(self):
+        hud = load_image(FIXTURES / 'hud_direita_sem_alerta.png')
+        guild = load_image(FIXTURES / 'hud_guilda.png')
+        self.assertFalse(match_step(self.alert, self.window(hud, guild))[0],
+                         'a bolinha da Guilda tem a mesma cor, mas fica fora da area')
+
+    def test_alert_survives_animation(self):
+        for kw in ({'scale': 0.75}, {'scale': 1.25}, {'angle': 20}, {'angle': -15},
+                   {'dy': -10}, {'gain': 0.6}, {'scale': 1.15, 'angle': 8}):
+            with self.subTest(**kw):
+                self.assertTrue(match_step(self.alert, self.window(self.animated(**kw)))[0])
 
     def test_rebirth_button_found_with_or_without_alert(self):
         for screen in ('hud_direita', 'hud_direita_sem_alerta', 'hud_direita_fundo_trocado'):
@@ -406,6 +476,36 @@ class TaskTest(unittest.TestCase):
         game = FakeGame()  # menu fechado: o botao rebirth nao aparece
         self.assertFalse(make_bot(game).run_task(self.ws.load().tasks[0]))
         self.assertEqual(game.clicked, [])
+
+    def test_color_step_in_task(self):
+        config = copy(CONFIG)
+        # o botao REBIRTH verde (40, 190, 60) fica na metade de cima/esquerda
+        config['steps'] = [
+            {'name': 'verde no menu', 'color': '#3CBE28', 'area': [0.3, 0.35, 0.7, 0.6],
+             'min_pixels': 500, 'click': False, 'wait': 0},
+            {'name': 'fechar', 'image': 'templates/close.png'},
+        ]
+        config['cleanup'] = []
+        self.ws.write(config)
+        task = self.ws.load().tasks[0]
+        game = FakeGame()
+        self.assertFalse(make_bot(game).run_task(task), 'menu fechado: nada verde na area')
+        game.menu = True
+        self.assertTrue(make_bot(game).run_task(task))
+        self.assertEqual(game.clicked, ['close'])
+
+    def test_image_area_limits_search(self):
+        config = copy(CONFIG)
+        config['steps'] = [{'name': 'menu', 'image': 'templates/menu.png', 'wait': 0,
+                            'area': [0.5, 0, 1, 1]}]   # o botao MENU fica na esquerda
+        config['cleanup'] = []
+        self.ws.write(config)
+        game = FakeGame()
+        self.assertFalse(make_bot(game).run_task(self.ws.load().tasks[0]))
+        config['steps'][0]['area'] = [0, 0.5, 0.5, 1]
+        self.ws.write(config)
+        self.assertTrue(make_bot(game).run_task(self.ws.load().tasks[0]))
+        self.assertEqual(game.clicked, ['menu'])
 
     def test_click_repeat(self):
         config = copy(CONFIG)
@@ -564,6 +664,45 @@ class ConfigTest(unittest.TestCase):
     def test_bad_click_method(self):
         self.assertConfigError({**CONFIG, 'click_method': 'mouse'}, 'click_method')
 
+    def color_step(self, **kw):
+        step = {'name': 'alerta', 'color': '#FF3D02', 'area': [0.5, 0, 1, 0.5], 'click': False}
+        step.update(kw)
+        return {**CONFIG, 'steps': [step], 'cleanup': []}
+
+    def test_color_step(self):
+        self.ws.write(self.color_step(min_pixels=40))
+        step = self.ws.load().tasks[0].steps[0]
+        self.assertEqual(step.color, (2, 61, 255))
+        self.assertEqual(step.area, (0.5, 0.0, 1.0, 0.5))
+        self.assertEqual(step.min_pixels, 40)
+        self.assertFalse(step.click)
+
+    def test_color_step_needs_area(self):
+        config = self.color_step()
+        del config['steps'][0]['area']
+        self.assertConfigError(config, '"area"')
+
+    def test_bad_color(self):
+        self.assertConfigError(self.color_step(color='vermelho'), '#RRGGBB')
+        self.assertConfigError(self.color_step(color='#ZZ0000'), '#RRGGBB')
+
+    def test_dull_color_rejected(self):
+        self.assertConfigError(self.color_step(color='#808080'), 'apagada')
+
+    def test_bad_area(self):
+        self.assertConfigError(self.color_step(area=[0.9, 0, 0.5, 1]), 'esquerda < direita')
+        self.assertConfigError(self.color_step(area=[0, 0, 2, 1]), 'de 0 a 1')
+
+    def test_area_needs_image_or_color(self):
+        config = copy(CONFIG)
+        config['steps'][0] = {'name': 'x', 'key': 'e', 'area': [0, 0, 1, 1]}
+        self.assertConfigError(config, '"area" so vale')
+
+    def test_color_and_image_together(self):
+        config = copy(CONFIG)
+        config['steps'][0]['color'] = '#FF3D02'
+        self.assertConfigError(config, 'exatamente um')
+
     def test_bad_click(self):
         config = copy(CONFIG)
         config['steps'][0]['click'] = 'nao'
@@ -613,7 +752,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(names, ['melhorar comedouro', 'mandar galo para a torre', 'renascer'])
         alert = cfg.tasks[2].steps[0]
         self.assertFalse(alert.click)
-        self.assertIsNotNone(alert.mask, 'o recorte do ! tem fundo transparente')
+        self.assertEqual(alert.color, parse_color('#FF3D02'))
+        self.assertIsNotNone(alert.area)
 
 
 if __name__ == '__main__':

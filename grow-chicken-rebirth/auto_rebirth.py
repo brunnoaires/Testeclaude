@@ -25,7 +25,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from vision import Frame, find_template, has_detail, load_template, save_image
+from vision import (Frame, area_box, color_hsv, find_color, find_template, has_detail, load_template,
+                    parse_color, save_image)
 
 POLL_SECONDS = 0.3
 
@@ -36,7 +37,8 @@ TOP_KEYS = {'window_title', 'click_method', 'interval_seconds', 'confidence', 'c
 # pyautogui: o jeito antigo; no Roblox a seta chega no botao mas o clique pode nao pegar
 CLICK_METHODS = ('sendinput', 'directinput', 'pyautogui')
 TASK_KEYS = {'name', 'every_seconds', 'steps', 'cleanup'}
-STEP_KEYS = {'name', 'image', 'pos', 'key', 'click', 'hold', 'repeat', 'wait', 'after', 'optional',
+STEP_KEYS = {'name', 'image', 'pos', 'key', 'color', 'area', 'min_pixels', 'click', 'hold', 'repeat',
+             'wait', 'after', 'optional',
              'confidence', 'color_tolerance'}
 KEY_NAMES = {'space', 'enter', 'tab', 'esc', 'shift', 'ctrl', 'alt', 'up', 'down', 'left', 'right',
              *(f'f{i}' for i in range(1, 13))}
@@ -52,6 +54,9 @@ class Step:
     image: Path | None = None
     pos: tuple | None = None
     key: str | None = None
+    color: tuple | None = None   # (b, g, r) da mancha de cor procurada
+    area: tuple | None = None    # (esquerda, topo, direita, baixo), fracao da janela
+    min_pixels: int = 100        # pixels da cor para contar como achado
     hold: float = 0.0         # segundos segurando a tecla
     repeat: int = 1           # quantas vezes clica / aperta
     wait: float = 3.0         # segundos esperando o botao aparecer
@@ -104,8 +109,8 @@ def _parse_step(raw, base, defaults, where):
         raise ConfigError(f'{where}: chave desconhecida {", ".join(sorted(unknown))}')
     name = str(raw.get('name') or where)
     where = f'{where} ("{name}")'
-    if sum(k in raw for k in ('image', 'pos', 'key')) != 1:
-        raise ConfigError(f'{where}: use "image", "pos" ou "key" (exatamente um)')
+    if sum(k in raw for k in ('image', 'pos', 'key', 'color')) != 1:
+        raise ConfigError(f'{where}: use "image", "pos", "key" ou "color" (exatamente um)')
 
     step = Step(
         name=name,
@@ -117,11 +122,36 @@ def _parse_step(raw, base, defaults, where):
         click=raw.get('click', True),
         confidence=_number(raw, 'confidence', defaults['confidence'], where, 0.0, 1.0),
         color_tolerance=_number(raw, 'color_tolerance', defaults['color_tolerance'], where, 0.0, 255.0),
+        min_pixels=int(_number(raw, 'min_pixels', 100, where, 1)),
     )
     if not isinstance(step.click, bool):
         raise ConfigError(f'{where}: "click" tem que ser true ou false')
-    if not step.click and 'image' not in raw:
-        raise ConfigError(f'{where}: "click": false so vale com "image"')
+    if not step.click and 'image' not in raw and 'color' not in raw:
+        raise ConfigError(f'{where}: "click": false so vale com "image" ou "color"')
+    if 'area' in raw:
+        if 'image' not in raw and 'color' not in raw:
+            raise ConfigError(f'{where}: "area" so vale com "image" ou "color"')
+        area = raw['area']
+        if (not isinstance(area, list) or len(area) != 4
+                or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 1 for v in area)
+                or area[0] >= area[2] or area[1] >= area[3]):
+            raise ConfigError(f'{where}: "area" tem que ser [esquerda, topo, direita, baixo], numeros de 0 a 1 '
+                              f'(fracao da janela), com esquerda < direita e topo < baixo')
+        step.area = tuple(float(v) for v in area)
+    if 'color' in raw:
+        try:
+            step.color = parse_color(raw['color']) if isinstance(raw['color'], str) else None
+        except ValueError:
+            step.color = None
+        if step.color is None:
+            raise ConfigError(f'{where}: "color" tem que ser no formato "#RRGGBB" (ex.: "#FF3D02")')
+        if color_hsv(step.color)[1] < 100:
+            raise ConfigError(f'{where}: a cor {raw["color"]} e apagada demais para achar pela cor; '
+                              f'isso funciona com cores vivas, como a bolinha vermelha de notificacao')
+        if step.area is None:
+            raise ConfigError(f'{where}: passo com "color" precisa de "area": a mesma cor costuma '
+                              f'aparecer em outros lugares da tela')
+        return step
     if 'image' in raw:
         step.image = (base / raw['image']).resolve()
         if not step.image.is_file():
@@ -222,6 +252,23 @@ def load_config(path):
 # --------------------------------------------------------------------------
 # Logica (sem dependencia de tela/mouse/teclado, testavel)
 
+def match_step(step, frame):
+    """Procura um passo de imagem ou de cor num print. Devolve (achou, ponto
+    na tela, descricao para o check)."""
+    img, ox, oy = frame.image, 0, 0
+    if step.area:
+        x1, y1, x2, y2 = area_box(img.shape, step.area)
+        img, ox, oy = img[y1:y2, x1:x2], x1, y1
+    if step.color:
+        m = find_color(img, step.color, step.min_pixels)
+        point = frame.to_screen(m.center[0] + ox, m.center[1] + oy)
+        return m.found, point, f'{m.count} pixels da cor na area (min {step.min_pixels}), centro {point}'
+    m = find_template(img, step.template, step.confidence, step.color_tolerance, step.mask)
+    point = frame.to_screen(m.center[0] + ox, m.center[1] + oy)
+    return m.found, point, (f'formato {m.score:.2f} (min {step.confidence:.2f}), '
+                            f'cor {m.color_diff:.0f} (max {step.color_tolerance:.0f}), melhor lugar {point}')
+
+
 class Bot:
     def __init__(self, grab, click, press, sleep=time.sleep, clock=time.monotonic, log=log):
         self.grab = grab
@@ -235,9 +282,8 @@ class Bot:
         """Procura o passo uma vez. Devolve (x, y) em coordenadas do mouse, ou None."""
         if step.pos:
             return step.pos
-        frame = self.grab()
-        m = find_template(frame.image, step.template, step.confidence, step.color_tolerance, step.mask)
-        return frame.to_screen(*m.center) if m.found else None
+        found, point, _ = match_step(step, self.grab())
+        return point if found else None
 
     def wait_for(self, step):
         deadline = self.clock() + step.wait
@@ -383,9 +429,13 @@ def _directinput():
     return pydirectinput
 
 
-def make_clicker(method=None):
+def make_clicker(method=None, park=None):
+    """Clica em (x, y). Depois leva o mouse para park() (centro do Roblox):
+    parado em cima do botao, o hover do Roblox pode mudar o desenho dele e o
+    recorte nao bater mais na proxima vez."""
     import pyautogui
     pyautogui.FAILSAFE = True
+    park = park or (lambda: None)
 
     method = method or ('sendinput' if sys.platform == 'win32' else 'pyautogui')
     if method != 'pyautogui' and sys.platform != 'win32':
@@ -399,16 +449,22 @@ def make_clicker(method=None):
             pyautogui.mouseDown()
             time.sleep(0.06)
             pyautogui.mouseUp()
+            rest = park()
+            if rest:
+                pyautogui.moveTo(*rest, duration=0.1)
         return click
 
     di = _directinput()
 
-    def click(x, y):
-        pyautogui.failSafeCheck()
+    def move(x, y):
         if method == 'directinput':
             di.moveTo(x, y)
         else:
             pyautogui.moveTo(x, y, duration=0.15)
+
+    def click(x, y):
+        pyautogui.failSafeCheck()
+        move(x, y)
         # O Roblox le o mouse em baixo nivel (raw input). SetCursorPos, que o
         # pyautogui usa, teletransporta a seta sem gerar esse evento: a seta
         # chega no botao, mas para o Roblox o mouse nao esta em cima dele e o
@@ -419,8 +475,35 @@ def make_clicker(method=None):
         di.moveRel(-2, 0, relative=True)
         di.mouseDown()
         di.mouseUp()
+        rest = park()
+        if rest:
+            move(*rest)
+            di.moveRel(2, 0, relative=True)  # para o Roblox ver o mouse saindo do botao
+            di.moveRel(-2, 0, relative=True)
 
     return click
+
+
+def _window_center(title):
+    win = _find_window(title)
+    if win is None:  # sem a janela, o centro da tela principal
+        import pyautogui
+        w, h = pyautogui.size()
+        return w // 2, h // 2
+    return win.left + win.width // 2, win.top + win.height // 2
+
+
+def _sleep_watching_failsafe(seconds):
+    """Espera conferindo o canto da tela a cada 0.2 s, para o failsafe parar
+    o script na hora, e nao so na proxima tecla ou clique."""
+    import pyautogui
+    end = time.monotonic() + seconds
+    while True:
+        pyautogui.failSafeCheck()
+        left = end - time.monotonic()
+        if left <= 0:
+            return
+        time.sleep(min(0.2, left))
 
 
 def make_presser():
@@ -489,7 +572,8 @@ def cmd_run(cfg, once):
     import pyautogui
 
     _describe_window(cfg.window_title)
-    bot = Bot(make_grabber(cfg.window_title), make_clicker(cfg.click_method), make_presser())
+    clicker = make_clicker(cfg.click_method, park=lambda: _window_center(cfg.window_title))
+    bot = Bot(make_grabber(cfg.window_title), clicker, make_presser())
     warned = []
 
     def focus():
@@ -507,7 +591,7 @@ def cmd_run(cfg, once):
             wait = runner.tick()
             if once:
                 break
-            time.sleep(wait)
+            _sleep_watching_failsafe(wait)
     except KeyboardInterrupt:
         print()
     except pyautogui.FailSafeException:
@@ -539,11 +623,9 @@ def cmd_check(cfg, delay):
             if step.pos:
                 print(f'  posicao fixa  {step.name}: {step.pos}')
                 continue
-            m = find_template(frame.image, step.template, step.confidence, step.color_tolerance, step.mask)
-            status = 'ACHOU    ' if m.found else 'nao achou'
-            print(f'  {status}     {step.name}: formato {m.score:.2f} (min {step.confidence:.2f}), '
-                  f'cor {m.color_diff:.0f} (max {step.color_tolerance:.0f}), '
-                  f'melhor lugar {frame.to_screen(*m.center)}')
+            found, _, detail = match_step(step, frame)
+            status = 'ACHOU    ' if found else 'nao achou'
+            print(f'  {status}     {step.name}: {detail}')
     print('\nSo aparece o que esta na tela agora: abra o menu Renascimento na mao '
           'e rode de novo para testar os botoes de dentro dele.')
 
@@ -582,7 +664,7 @@ def cmd_clicktest(window_title, method, delay):
     import pyautogui
 
     shown = method or ('sendinput' if sys.platform == 'win32' else 'pyautogui')
-    click = make_clicker(method)
+    click = make_clicker(method, park=lambda: _window_center(window_title))
     print(f'Teste de clique (metodo {shown}). Deixe o Roblox aberto, com o menu '
           f'Renascimento FECHADO.')
     _countdown('Ponha o mouse em cima do botao Renascimento', delay)

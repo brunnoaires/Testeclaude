@@ -77,6 +77,52 @@ def save_image(path, image):
     buf.tofile(str(path))
 
 
+@dataclass
+class ColorMatch:
+    count: int          # pixels da cor achados
+    center: tuple       # (x, y) do centro deles, na imagem buscada
+    found: bool
+
+
+def parse_color(text):
+    """'#FF3D02' -> (b, g, r), que e a ordem do OpenCV."""
+    s = text.strip().lstrip('#')
+    if len(s) != 6:
+        raise ValueError(f'cor "{text}" tem que ser no formato #RRGGBB')
+    r, g, b = (int(s[i:i + 2], 16) for i in (0, 2, 4))
+    return b, g, r
+
+
+def area_box(shape, area):
+    """[esquerda, topo, direita, baixo] em fracao da imagem -> pixels."""
+    h, w = shape[:2]
+    x1, y1, x2, y2 = area
+    return int(x1 * w), int(y1 * h), max(int(x1 * w) + 1, round(x2 * w)), max(int(y1 * h) + 1, round(y2 * h))
+
+
+def color_hsv(bgr):
+    return cv2.cvtColor(np.uint8([[bgr]]), cv2.COLOR_BGR2HSV)[0, 0].astype(int)
+
+
+def find_color(screen, bgr, min_pixels, hue_tolerance=8):
+    """Procura uma mancha de cor viva (ex.: a bolinha vermelha de notificacao).
+
+    Compara pelo tom (matiz do HSV), nao pelo brilho: a bolinha pode pulsar,
+    balancar, girar ou piscar mais clara/escura que o tom continua o mesmo.
+    O que conta e haver pelo menos min_pixels pixels desse tom.
+    """
+    h0, s0, v0 = color_hsv(bgr)
+    hsv = cv2.cvtColor(screen, cv2.COLOR_BGR2HSV).astype(int)
+    dh = np.abs(hsv[..., 0] - h0)
+    dh = np.minimum(dh, 180 - dh)  # o matiz da volta: 179 e vizinho de 0
+    mask = (dh <= hue_tolerance) & (hsv[..., 1] >= s0 - 80) & (hsv[..., 2] >= v0 * 0.45)
+    count = int(mask.sum())
+    if not count:
+        return ColorMatch(0, (0, 0), False)
+    ys, xs = np.nonzero(mask)
+    return ColorMatch(count, (int(xs.mean()), int(ys.mean())), count >= min_pixels)
+
+
 def _pixels(image, mask):
     return image[mask] if mask is not None else image.reshape(-1, image.shape[-1])
 

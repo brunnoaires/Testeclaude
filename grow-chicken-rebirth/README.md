@@ -58,11 +58,15 @@ Os recortes de todos os botões já vêm prontos em `templates/`:
 
 | Arquivo | Botão |
 |---|---|
-| `renascimento_alerta.png` | o **!** vermelho em cima do Renascimento, com um pedaço da chama |
 | `renascimento.png` | o botão Renascimento, na lateral direita |
 | `botao_torre.png` | **só a palavra TORRE**, embaixo do castelo |
 | `botao_renascer.png` | RENASCER verde, dentro do menu |
 | `fechar_menu.png` | o X vermelho do menu |
+
+O **!** vermelho não usa recorte: o script procura a cor da bolinha
+(`#FF3D02`) numa área pequena em volta do Renascimento. Assim não importa se
+a bolinha pulsa, pula, gira ou pisca. A área é necessária porque a bolinha
+da Guilda tem a mesma cor.
 
 Confira se eles batem com a sua tela:
 
@@ -82,7 +86,7 @@ mandar galo para a torre:
   ACHOU         botao TORRE: formato 1.00 (min 0.90), cor 0 (max 40), melhor lugar (960, 992)
 
 renascer:
-  ACHOU         ! vermelho no Renascimento: formato 1.00 (min 0.85), cor 0 (max 40), melhor lugar (1881, 477)
+  ACHOU         ! vermelho no Renascimento: 916 pixels da cor na area (min 150), centro (1887, 469)
   ACHOU         abrir menu Renascimento: formato 1.00 (min 0.85), cor 0 (max 40), melhor lugar (1853, 520)
   nao achou     botao RENASCER (liberado): formato 0.30 (min 0.85), cor 73 (max 40), melhor lugar (546, 576)
   nao achou     fechar menu: formato 0.45 (min 0.85), cor 69 (max 40), melhor lugar (1045, 360)
@@ -107,7 +111,7 @@ Como ler o resultado:
 - **"cor" acima do máximo num botão que está na tela:** idem.
 - **TORRE "ACHOU" com o galo na torre:** perigo, ele tiraria o galo da torre.
   Recorte de novo só a palavra, ou suba o `confidence` desse passo.
-- **! "ACHOU" sem o ! na tela:** suba o `confidence` desse passo.
+- **! "nao achou" com o ! na tela:** veja "Se o ! não for achado".
 
 ## 2. Rodar
 
@@ -118,27 +122,41 @@ py auto_rebirth.py run
 ```
 
 ```
+[14:02:11] janela "Roblox" encontrada
 [14:02:11] tarefa "melhorar comedouro": a cada 10s
 [14:02:11] tarefa "mandar galo para a torre": a cada 10s
 [14:02:11] tarefa "renascer": a cada 20s
 [14:02:11] rodando. Para parar: Ctrl+C aqui, ou mouse num canto da tela.
 [14:02:11] melhorar comedouro
 [14:02:11]   apertando E x3 (E no comedouro)
+[14:02:13] "melhorar comedouro" feito (1x nesta sessao)
 [14:02:13] mandar galo para a torre
 [14:02:13]   clicando em "botao TORRE" (960, 992)
-[14:02:15] renascer
-[14:02:15]   "! vermelho no Renascimento" nao apareceu, fica para a proxima
+[14:02:14] "mandar galo para a torre" feito (1x nesta sessao)
+[14:02:14] renascer
+[14:02:16]   "! vermelho no Renascimento" nao apareceu, fica para a proxima
+[14:02:24] melhorar comedouro
+[14:02:24]   apertando E x3 (E no comedouro)
+[14:02:26] "melhorar comedouro" feito (2x nesta sessao)
+[14:02:26] mandar galo para a torre
+[14:02:26]   "botao TORRE" nao apareceu, fica para a proxima
 ...
 [14:31:40] renascer
-[14:31:40]   "! vermelho no Renascimento" esta na tela (1881, 477)
-[14:31:40]   clicando em "abrir menu Renascimento" (1853, 520)
-[14:31:42]   clicando em "botao RENASCER (liberado)" (960, 682)
-[14:31:43]   clicando em "fechar menu" (1220, 205)
-[14:31:44] "renascer" feito (1x nesta sessao)
+[14:31:40]   "! vermelho no Renascimento" esta na tela (1887, 469)
+[14:31:41]   clicando em "abrir menu Renascimento" (1853, 520)
+[14:31:43]   clicando em "botao RENASCER (liberado)" (960, 682)
+[14:31:45]   clicando em "fechar menu" (1220, 205)
+[14:31:46] "renascer" feito (1x nesta sessao)
 ```
 
+As linhas "nao apareceu, fica para a proxima" são normais: o **!** ainda não
+apareceu, ou o TORRE virou RECUAR porque o galo já está na torre. Depois de
+cada clique o mouse volta para o meio da janela, para não ficar parado em
+cima de um botão.
+
 Para parar, aperte **Ctrl+C** no terminal ou jogue o mouse num **canto da
-tela** (o failsafe do pyautogui interrompe na hora). `run --once` roda cada
+tela** (ele confere o canto a cada 0,2 s enquanto espera, e antes de cada
+clique ou tecla). `run --once` roda cada
 tarefa uma vez e sai, o que é bom para testar.
 
 ## Se a seta vai no botão mas não clica
@@ -207,9 +225,6 @@ Dicas:
   mesmo castelo, só muda a palavra. Com o castelo no recorte, o script pode
   confundir os dois e clicar em RECUAR, tirando o galo da torre. Recorte com o
   galo **em casa**.
-- **No !, pegue a bolinha vermelha e só um pedacinho da chama.** A bolinha
-  sozinha é igual à da Guilda (que mostra "1"), e a chama é o que diz que é a
-  do Renascimento.
 - Pegue o mínimo possível de cenário. Os recortes que vêm prontos têm o
   cenário transparente (ignorado na comparação); os feitos pelo `capture`
   não, e por isso o cenário que mudar atrás do botão baixa a nota. Se um
@@ -227,6 +242,27 @@ e troque o passo no `config.json`:
 
 A posição fixa só vale enquanto a janela do Roblox não mudar de lugar nem de
 tamanho.
+
+## Se o ! não for achado
+
+Rode o `check` com o **!** aparecendo no jogo e olhe a linha dele:
+
+```
+  nao achou     ! vermelho no Renascimento: 40 pixels da cor na area (min 150), centro (1890, 470)
+```
+
+- **Alguns pixels, mas menos que o mínimo:** a bolinha está menor na sua
+  tela. Baixe o `min_pixels` do passo (ex.: `80`). Sem o **!**, a área tem uns
+  40 pixels parecidos (da borda da chama); fique acima disso.
+- **0 pixels:** a área não está pegando a bolinha, o que normalmente quer
+  dizer que a janela é de outro tamanho. Aumente a `area` do passo, por
+  exemplo `[0.85, 0.30, 1.0, 0.65]`. Os números são frações da janela do
+  Roblox: `[esquerda, topo, direita, baixo]`, onde 0 é a borda
+  esquerda/de cima e 1 é a direita/de baixo.
+
+Se a área crescer a ponto de pegar a bolinha de outro botão (Loja, Banda), o
+pior que acontece é o script abrir o menu Renascimento à toa: sem o RENASCER
+verde, ele fecha o menu e não renasce.
 
 ## Se o jogo pedir confirmação ao renascer
 
@@ -268,13 +304,16 @@ Cada tarefa:
 | `steps` | — | passos, em ordem |
 | `cleanup` | `[]` | passos que rodam sempre no fim, deu certo ou não |
 
-Cada passo tem **um** destes: `image`, `pos` ou `key`.
+Cada passo tem **um** destes: `image`, `color`, `pos` ou `key`.
 
 | Chave | Padrão | O que faz |
 |---|---|---|
 | `name` | — | nome que aparece no log |
 | `image` | — | recorte do botão (caminho relativo à config) |
-| `click` | `true` | com `false`, só confere se o botão está na tela, sem clicar |
+| `color` | — | cor viva a procurar, `"#RRGGBB"` (ex.: a bolinha `"#FF3D02"`); exige `area` |
+| `area` | a janela toda | `[esquerda, topo, direita, baixo]` em fração da janela (0 a 1); com `image` ou `color`, só procura ali |
+| `min_pixels` | `100` | com `color`: quantos pixels da cor contam como achado |
+| `click` | `true` | com `false`, só confere se o botão (ou a cor) está na tela, sem clicar |
 | `pos` | — | `[x, y]` fixo a clicar |
 | `key` | — | tecla a apertar: uma letra ou número (`"e"`), ou `space`, `enter`, `tab`, `esc`, `shift`, `ctrl`, `alt`, setas (`up`...), `f1`...`f12` |
 | `hold` | `0` | segundos segurando a tecla (para prompt de "segure E") |
@@ -300,6 +339,11 @@ fecha o menu se alguém o deixou aberto.
   de fora da comparação. Os recortes prontos usam isso para ignorar o cenário
   3D atrás dos botões da lateral e da barra de baixo, que muda quando a
   câmera gira.
+- **Passo de cor:** conta os pixels do mesmo tom (matiz) da cor pedida dentro
+  da área. Compara o tom e não o brilho, então uma bolinha que pisca mais
+  clara ou mais escura continua contando. Serve para coisas animadas, como a
+  bolinha do **!**: um recorte de tamanho fixo só bate nos quadros em que a
+  animação está igual ao print.
 
 No Windows as teclas vão pelo `pydirectinput`, que manda o mesmo código de
 um teclado de verdade. Jogos em DirectX, como o Roblox, costumam ignorar o
