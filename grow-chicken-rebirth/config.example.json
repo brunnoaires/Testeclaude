@@ -19,13 +19,14 @@
     },
     {
       "name": "renascer",
-      "every_seconds": 30,
+      "every_seconds": 20,
       "steps": [
+        { "name": "! vermelho no Renascimento", "image": "templates/renascimento_alerta.png", "click": false, "wait": 0 },
         { "name": "abrir menu Renascimento", "image": "templates/renascimento.png", "wait": 3 },
-        { "name": "botao RENASCER (liberado)", "image": "templates/botao_renascer.png", "wait": 2 }
+        { "name": "botao RENASCER (liberado)", "image": "templates/botao_renascer.png", "wait": 3 }
       ],
       "cleanup": [
-        { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 2 }
+        { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 1 }
       ]
     }
   ]

@@ -40,14 +40,32 @@ class Match:
     found: bool
 
 
-def load_image(path):
+def _decode(path, flags):
     # imdecode em vez de imread: imread falha com acento no caminho no Windows
     # (ex.: C:\Users\Joao com til).
     data = np.fromfile(str(path), dtype=np.uint8)
-    img = cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
+    img = cv2.imdecode(data, flags) if data.size else None
     if img is None:
         raise ValueError(f'nao consegui abrir a imagem {path}')
     return img
+
+
+def load_image(path):
+    return _decode(path, cv2.IMREAD_COLOR)
+
+
+def load_template(path):
+    """Recorte e mascara. A mascara vem da transparencia do PNG: o que e
+    transparente e cenario e fica de fora da comparacao. Sem transparencia,
+    a mascara e None e o recorte inteiro conta."""
+    img = _decode(path, cv2.IMREAD_UNCHANGED)
+    if img.ndim == 2:
+        return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR), None
+    if img.shape[2] == 4:
+        alpha = img[..., 3]
+        bgr = np.ascontiguousarray(img[..., :3])
+        return bgr, (alpha > 127) if (alpha < 255).any() else None
+    return img, None
 
 
 def save_image(path, image):
@@ -59,29 +77,42 @@ def save_image(path, image):
     buf.tofile(str(path))
 
 
-def has_detail(image):
-    return float(image.std()) >= MIN_DETAIL
+def _pixels(image, mask):
+    return image[mask] if mask is not None else image.reshape(-1, image.shape[-1])
 
 
-def find_template(screen, template, confidence, color_tolerance):
+def has_detail(image, mask=None):
+    pixels = _pixels(image, mask)
+    return len(pixels) >= 20 and float(pixels.std()) >= MIN_DETAIL
+
+
+def find_template(screen, template, confidence, color_tolerance, mask=None):
     """Melhor posicao do template na tela.
 
     O formato sozinho nao separa botao liberado de botao desabilitado: os dois
     tem o mesmo texto e borda, so muda a cor (verde x cinza). Por isso, alem do
     score de formato, a cor media do trecho achado tem que bater com a do
     recorte.
+
+    Com mascara (True = botao, False = cenario), formato e cor so olham os
+    pixels do botao: o cenario 3D atras dele pode mudar a vontade.
     """
     th, tw = template.shape[:2]
     sh, sw = screen.shape[:2]
-    if th > sh or tw > sw or not has_detail(template):
+    if th > sh or tw > sw or not has_detail(template, mask):
         return Match(0.0, 255.0, (0, 0), False)
 
-    result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
-    # Trecho de tela de cor lisa da divisao por zero e pode virar NaN/inf.
-    result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
+    if mask is None:
+        result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+    else:
+        cv_mask = np.repeat(mask.astype(np.uint8)[..., None] * 255, 3, axis=2)
+        result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED, mask=cv_mask)
+    # Trecho de tela de cor lisa da divisao por zero e vira NaN/inf; com
+    # mascara, tambem pode sair um valor bem acima de 1. Nenhum deles e acerto.
+    result[~np.isfinite(result) | (result > 1.0001)] = 0.0
     _, score, _, (x, y) = cv2.minMaxLoc(result)
 
     patch = screen[y:y + th, x:x + tw]
-    color_diff = float(np.abs(patch.mean(axis=(0, 1)) - template.mean(axis=(0, 1))).max())
+    color_diff = float(np.abs(_pixels(patch, mask).mean(axis=0) - _pixels(template, mask).mean(axis=0)).max())
     found = score >= confidence and color_diff <= color_tolerance
-    return Match(float(score), color_diff, (x + tw // 2, y + th // 2), found)
+    return Match(min(float(score), 1.0), color_diff, (x + tw // 2, y + th // 2), found)

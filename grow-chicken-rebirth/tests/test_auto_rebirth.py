@@ -15,7 +15,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from auto_rebirth import Bot, ConfigError, Runner, load_config  # noqa: E402
-from vision import Frame, find_template, load_image, save_image  # noqa: E402
+from vision import Frame, find_template, load_image, load_template, save_image  # noqa: E402
 
 GREEN, GRAY, BLUE, RED, YELLOW, BROWN = (
     (40, 190, 60), (130, 130, 130), (200, 120, 30), (40, 40, 210), (30, 200, 230), (40, 90, 150))
@@ -211,6 +211,44 @@ class VisionTest(unittest.TestCase):
         m = find_template(np.zeros((10, 10, 3), np.uint8), np.zeros((20, 20, 3), np.uint8), 0.85, 40)
         self.assertFalse(m.found)
 
+    def test_mask_ignores_background(self):
+        # botao num fundo; depois o mesmo botao em outro fundo
+        game = FakeGame()
+        x, y, w, h, _ = BUTTONS['tower']
+        pad = 12
+        region = (slice(y - pad, y + h + pad), slice(x - pad, x + w + pad))
+        crop = game.grab().image[region].copy()
+        mask = np.zeros(crop.shape[:2], bool)
+        mask[pad:-pad, pad:-pad] = True
+        other = game.grab().image.copy()
+        other[region][~mask] = 255 - other[region][~mask]  # cenario bem diferente em volta
+        self.assertLess(find_template(other, crop, 0.85, 40).score, 0.85, 'sem mascara o fundo atrapalha')
+        m = find_template(other, crop, 0.85, 40, mask)
+        self.assertTrue(m.found)
+        self.assertGreater(m.score, 0.99)
+
+    def test_mask_with_too_few_pixels(self):
+        tpl = template_for('tower', BROWN)
+        mask = np.zeros(tpl.shape[:2], bool)
+        mask[0, :5] = True
+        self.assertFalse(find_template(FakeGame().grab().image, tpl, 0.85, 40, mask).found)
+
+    def test_load_template_reads_alpha_as_mask(self):
+        with tempfile.TemporaryDirectory() as d:
+            bgra = np.zeros((10, 12, 4), np.uint8)
+            bgra[..., :3] = 90
+            bgra[2:8, 3:9, 3] = 255
+            save_image(Path(d) / 'a.png', bgra)
+            img, mask = load_template(Path(d) / 'a.png')
+            self.assertEqual(img.shape, (10, 12, 3))
+            self.assertEqual(int(mask.sum()), 36)
+            opaque = bgra.copy()
+            opaque[..., 3] = 255
+            save_image(Path(d) / 'b.png', opaque)
+            self.assertIsNone(load_template(Path(d) / 'b.png')[1])
+            save_image(Path(d) / 'c.png', bgra[..., :3])
+            self.assertIsNone(load_template(Path(d) / 'c.png')[1])
+
     def test_tower_not_confused_with_retreat(self):
         game = FakeGame()
         game.in_tower = True
@@ -218,11 +256,14 @@ class VisionTest(unittest.TestCase):
         self.assertFalse(m.found)
 
 
+FIXTURES = Path(__file__).resolve().parent / 'fixtures'
+
+
 class RealGameTest(unittest.TestCase):
     """Pedacos de prints do jogo de verdade: o menu com RENASCER (verde,
     liberado) e com AINDA NAO (marrom, bloqueado), os dois com MARCOS embaixo."""
 
-    FIXTURES = Path(__file__).resolve().parent / 'fixtures'
+    FIXTURES = FIXTURES
 
     def setUp(self):
         self.template = load_image(self.FIXTURES / 'renascer.png')
@@ -235,6 +276,48 @@ class RealGameTest(unittest.TestCase):
         m = find_template(load_image(self.FIXTURES / 'menu_bloqueado.png'), self.template, 0.85, 40)
         self.assertFalse(m.found)
         self.assertLess(m.score, 0.6, 'texto diferente: o formato ja nao deveria bater')
+
+
+class RealHudTest(unittest.TestCase):
+    """HUD do jogo de verdade, de um print com o renascimento liberado.
+
+    hud_direita: coluna da direita com o ! vermelho no Renascimento.
+    hud_direita_sem_alerta: o mesmo print com a bolinha do ! apagada por
+      edicao (inpaint) - nao e print real, mas o resto do botao e.
+    hud_direita_fundo_trocado: cenario atras do botao trocado por grama,
+      como se a camera tivesse girado.
+    hud_guilda: Guilda com a bolinha "1", mesmo estilo de bolinha do !.
+    hud_baixo: CHAMAR, TORRE e CAOS PROFISSIONAL.
+    """
+
+    def find(self, template, screen, confidence=0.85):
+        img, mask = load_template(FIXTURES / f'{template}.png')
+        return find_template(load_image(FIXTURES / f'{screen}.png'), img, confidence, 40, mask)
+
+    def test_alert_found(self):
+        self.assertTrue(self.find('renascimento_alerta', 'hud_direita').found)
+
+    def test_alert_found_with_other_background(self):
+        m = self.find('renascimento_alerta', 'hud_direita_fundo_trocado')
+        self.assertTrue(m.found)
+        self.assertGreater(m.score, 0.95, 'a mascara ignora o cenario')
+
+    def test_alert_absent(self):
+        self.assertFalse(self.find('renascimento_alerta', 'hud_direita_sem_alerta').found)
+
+    def test_alert_not_confused_with_guild_badge(self):
+        self.assertFalse(self.find('renascimento_alerta', 'hud_guilda').found)
+
+    def test_rebirth_button_found_with_or_without_alert(self):
+        for screen in ('hud_direita', 'hud_direita_sem_alerta', 'hud_direita_fundo_trocado'):
+            with self.subTest(screen=screen):
+                self.assertTrue(self.find('renascimento', screen).found)
+
+    def test_tower_found_on_the_right_label(self):
+        m = self.find('botao_torre', 'hud_baixo', 0.9)
+        self.assertTrue(m.found)
+        # TORRE fica no meio: CHAMAR a esquerda, CAOS PROFISSIONAL a direita
+        self.assertTrue(170 < m.center[0] < 230, m.center)
 
 
 class TaskTest(unittest.TestCase):
@@ -299,6 +382,30 @@ class TaskTest(unittest.TestCase):
         self.assertTrue(make_bot(game, clock).run_task(self.ws.load().tasks[0]))
         self.assertEqual(game.keys, ['e', 'e', 'e'])
         self.assertEqual(clock.t, 1.5)
+
+    def test_check_only_step(self):
+        config = copy(CONFIG)
+        config['steps'] = [
+            {'name': 'menu na tela', 'image': 'templates/menu.png', 'click': False, 'wait': 0},
+            {'name': 'abrir menu', 'image': 'templates/menu.png'},
+        ]
+        config['cleanup'] = []
+        self.ws.write(config)
+        game = FakeGame()
+        self.assertTrue(make_bot(game).run_task(self.ws.load().tasks[0]))
+        self.assertEqual(game.clicked, ['menu'], 'o primeiro passo so olha, nao clica')
+
+    def test_check_only_step_absent_stops_task(self):
+        config = copy(CONFIG)
+        config['steps'] = [
+            {'name': 'rebirth liberado', 'image': 'templates/rebirth.png', 'click': False, 'wait': 0},
+            {'name': 'abrir menu', 'image': 'templates/menu.png'},
+        ]
+        config['cleanup'] = []
+        self.ws.write(config)
+        game = FakeGame()  # menu fechado: o botao rebirth nao aparece
+        self.assertFalse(make_bot(game).run_task(self.ws.load().tasks[0]))
+        self.assertEqual(game.clicked, [])
 
     def test_click_repeat(self):
         config = copy(CONFIG)
@@ -449,6 +556,16 @@ class ConfigTest(unittest.TestCase):
         self.ws.write(config)
         self.assertEqual(self.ws.load().tasks[0].steps[0].key, 'space')
 
+    def test_bad_click(self):
+        config = copy(CONFIG)
+        config['steps'][0]['click'] = 'nao'
+        self.assertConfigError(config, '"click"')
+
+    def test_click_false_needs_image(self):
+        config = copy(CONFIG)
+        config['steps'][0] = {'name': 'x', 'key': 'e', 'click': False}
+        self.assertConfigError(config, '"click": false')
+
     def test_bad_repeat(self):
         config = copy(CONFIG)
         config['steps'][0]['repeat'] = 0
@@ -481,17 +598,14 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaises(ConfigError):
             self.ws.load()
 
-    def test_example_config_is_valid(self):
-        example = json.loads((Path(__file__).resolve().parent.parent / 'config.example.json')
-                             .read_text(encoding='utf-8'))
-        # Nem todas as imagens do exemplo existem no repo (algumas o usuario
-        # recorta); troca pelas de teste e confere que o resto e aceito.
-        for task in example['tasks']:
-            for step in task.get('steps', []) + task.get('cleanup', []):
-                if 'image' in step:
-                    step['image'] = 'templates/menu.png'
-        self.ws.write(example)
-        self.assertGreaterEqual(len(self.ws.load().tasks), 3)
+    def test_example_config_loads_as_is(self):
+        # Todos os recortes do exemplo vem prontos em templates/.
+        cfg = load_config(Path(__file__).resolve().parent.parent / 'config.example.json')
+        names = [t.name for t in cfg.tasks]
+        self.assertEqual(names, ['melhorar comedouro', 'mandar galo para a torre', 'renascer'])
+        alert = cfg.tasks[2].steps[0]
+        self.assertFalse(alert.click)
+        self.assertIsNotNone(alert.mask, 'o recorte do ! tem fundo transparente')
 
 
 if __name__ == '__main__':

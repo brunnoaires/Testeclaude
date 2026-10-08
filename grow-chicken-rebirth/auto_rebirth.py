@@ -24,13 +24,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from vision import Frame, find_template, has_detail, load_image, save_image
+from vision import Frame, find_template, has_detail, load_template, save_image
 
 POLL_SECONDS = 0.3
 
 TOP_KEYS = {'window_title', 'interval_seconds', 'confidence', 'color_tolerance', 'tasks', 'steps', 'cleanup'}
 TASK_KEYS = {'name', 'every_seconds', 'steps', 'cleanup'}
-STEP_KEYS = {'name', 'image', 'pos', 'key', 'hold', 'repeat', 'wait', 'after', 'optional',
+STEP_KEYS = {'name', 'image', 'pos', 'key', 'click', 'hold', 'repeat', 'wait', 'after', 'optional',
              'confidence', 'color_tolerance'}
 KEY_NAMES = {'space', 'enter', 'tab', 'esc', 'shift', 'ctrl', 'alt', 'up', 'down', 'left', 'right',
              *(f'f{i}' for i in range(1, 13))}
@@ -51,9 +51,11 @@ class Step:
     wait: float = 3.0         # segundos esperando o botao aparecer
     after: float = 0.8        # pausa depois de cada clique / tecla
     optional: bool = False    # se nao aparecer, segue para o proximo passo
+    click: bool = True        # False: so confere se o botao esta na tela
     confidence: float = 0.85
     color_tolerance: float = 40.0
     template: object = None
+    mask: object = None       # pixels do botao (True) x cenario (False), da transparencia do PNG
 
 
 @dataclass
@@ -105,9 +107,14 @@ def _parse_step(raw, base, defaults, where):
         wait=_number(raw, 'wait', 3.0, where),
         after=_number(raw, 'after', 0.8, where),
         optional=bool(raw.get('optional', False)),
+        click=raw.get('click', True),
         confidence=_number(raw, 'confidence', defaults['confidence'], where, 0.0, 1.0),
         color_tolerance=_number(raw, 'color_tolerance', defaults['color_tolerance'], where, 0.0, 255.0),
     )
+    if not isinstance(step.click, bool):
+        raise ConfigError(f'{where}: "click" tem que ser true ou false')
+    if not step.click and 'image' not in raw:
+        raise ConfigError(f'{where}: "click": false so vale com "image"')
     if 'image' in raw:
         step.image = (base / raw['image']).resolve()
         if not step.image.is_file():
@@ -116,10 +123,10 @@ def _parse_step(raw, base, defaults, where):
                 f'  recorte com: python auto_rebirth.py capture {raw["image"]}\n'
                 f'  ou remova esse passo da config se o jogo nao tiver esse botao')
         try:
-            step.template = load_image(step.image)
+            step.template, step.mask = load_template(step.image)
         except ValueError as e:
             raise ConfigError(f'{where}: {e}') from None
-        if not has_detail(step.template):
+        if not has_detail(step.template, step.mask):
             raise ConfigError(f'{where}: {step.image.name} e uma cor lisa, sem detalhe para '
                               f'comparar. Recorte de novo pegando o texto do botao.')
     elif 'pos' in raw:
@@ -213,7 +220,7 @@ class Bot:
         if step.pos:
             return step.pos
         frame = self.grab()
-        m = find_template(frame.image, step.template, step.confidence, step.color_tolerance)
+        m = find_template(frame.image, step.template, step.confidence, step.color_tolerance, step.mask)
         return frame.to_screen(*m.center) if m.found else None
 
     def wait_for(self, step):
@@ -235,6 +242,9 @@ class Bot:
         point = self.wait_for(step)
         if point is None:
             return False
+        if not step.click:
+            self.log(f'  "{step.name}" esta na tela {point}')
+            return True
         self.log(f'  clicando em "{step.name}" {point}{times}')
         for _ in range(step.repeat):
             self.click(*point)
@@ -458,7 +468,7 @@ def cmd_check(cfg, delay):
             if step.pos:
                 print(f'  posicao fixa  {step.name}: {step.pos}')
                 continue
-            m = find_template(frame.image, step.template, step.confidence, step.color_tolerance)
+            m = find_template(frame.image, step.template, step.confidence, step.color_tolerance, step.mask)
             status = 'ACHOU    ' if m.found else 'nao achou'
             print(f'  {status}     {step.name}: formato {m.score:.2f} (min {step.confidence:.2f}), '
                   f'cor {m.color_diff:.0f} (max {step.color_tolerance:.0f}), '
