@@ -1,0 +1,5 @@
+__pycache__/
+config.json
+
+# Recortes da sua tela: dependem da sua resolucao, nao servem para outra pessoa.
+templates/*.png

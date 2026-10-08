@@ -1,0 +1,14 @@
+{
+  "window_title": "Roblox",
+  "interval_seconds": 30,
+  "confidence": 0.85,
+  "color_tolerance": 40,
+  "steps": [
+    { "name": "abrir menu Renascimento", "image": "templates/renascimento.png", "wait": 3 },
+    { "name": "botao de renascer (liberado)", "image": "templates/botao_renascer.png", "wait": 2 },
+    { "name": "confirmar", "image": "templates/confirmar.png", "wait": 3, "optional": true }
+  ],
+  "cleanup": [
+    { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 2 }
+  ]
+}
