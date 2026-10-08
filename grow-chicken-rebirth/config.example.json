@@ -12,9 +12,9 @@
     },
     {
       "name": "mandar galo para a torre",
-      "every_seconds": 60,
+      "every_seconds": 10,
       "steps": [
-        { "name": "botao TORRE", "image": "templates/botao_torre.png", "wait": 1, "confidence": 0.9 }
+        { "name": "botao TORRE", "image": "templates/botao_torre.png", "wait": 0, "confidence": 0.9 }
       ]
     },
     {

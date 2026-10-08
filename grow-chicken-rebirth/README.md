@@ -9,7 +9,7 @@ seu intervalo:
 | Tarefa | Padrão | O que faz |
 |---|---|---|
 | melhorar comedouro | a cada 10 s | aperta **E** 3 vezes; o boneco tem que estar parado ao lado do comedouro |
-| mandar galo para a torre | a cada 60 s | se o botão de baixo mostra **TORRE**, clica; se mostra **RECUAR**, o galo já está lá e não faz nada |
+| mandar galo para a torre | a cada 10 s | se o botão de baixo mostra **TORRE**, clica; se mostra **RECUAR**, o galo já está lá e não faz nada |
 | renascer | a cada 20 s | olha se o botão **Renascimento** está com o **!** vermelho; só então abre o menu, clica em **RENASCER** e fecha |
 
 Com o comedouro subindo, o galo ganha nível. A cada ida à torre ele vai mais
@@ -119,7 +119,7 @@ py auto_rebirth.py run
 
 ```
 [14:02:11] tarefa "melhorar comedouro": a cada 10s
-[14:02:11] tarefa "mandar galo para a torre": a cada 60s
+[14:02:11] tarefa "mandar galo para a torre": a cada 10s
 [14:02:11] tarefa "renascer": a cada 20s
 [14:02:11] rodando. Para parar: Ctrl+C aqui, ou mouse num canto da tela.
 [14:02:11] melhorar comedouro
