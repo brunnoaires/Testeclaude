@@ -37,7 +37,7 @@ TOP_KEYS = {'window_title', 'click_method', 'interval_seconds', 'confidence', 'c
 # pyautogui: o jeito antigo; no Roblox a seta chega no botao mas o clique pode nao pegar
 CLICK_METHODS = ('sendinput', 'directinput', 'pyautogui')
 TASK_KEYS = {'name', 'every_seconds', 'steps', 'cleanup'}
-STEP_KEYS = {'name', 'image', 'pos', 'key', 'color', 'area', 'min_pixels', 'click', 'hold', 'repeat',
+STEP_KEYS = {'name', 'image', 'pos', 'key', 'color', 'pause', 'area', 'min_pixels', 'click', 'hold', 'repeat',
              'wait', 'after', 'optional',
              'confidence', 'color_tolerance'}
 KEY_NAMES = {'space', 'enter', 'tab', 'esc', 'shift', 'ctrl', 'alt', 'up', 'down', 'left', 'right',
@@ -54,6 +54,7 @@ class Step:
     image: Path | None = None
     pos: tuple | None = None
     key: str | None = None
+    pause: float | None = None   # passo que so espera esses segundos
     color: tuple | None = None   # (b, g, r) da mancha de cor procurada
     area: tuple | None = None    # (esquerda, topo, direita, baixo), fracao da janela
     min_pixels: int = 100        # pixels da cor para contar como achado
@@ -109,8 +110,8 @@ def _parse_step(raw, base, defaults, where):
         raise ConfigError(f'{where}: chave desconhecida {", ".join(sorted(unknown))}')
     name = str(raw.get('name') or where)
     where = f'{where} ("{name}")'
-    if sum(k in raw for k in ('image', 'pos', 'key', 'color')) != 1:
-        raise ConfigError(f'{where}: use "image", "pos", "key" ou "color" (exatamente um)')
+    if sum(k in raw for k in ('image', 'pos', 'key', 'color', 'pause')) != 1:
+        raise ConfigError(f'{where}: use "image", "pos", "key", "color" ou "pause" (exatamente um)')
 
     step = Step(
         name=name,
@@ -172,6 +173,8 @@ def _parse_step(raw, base, defaults, where):
                 or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in pos)):
             raise ConfigError(f'{where}: "pos" tem que ser [x, y]')
         step.pos = (int(pos[0]), int(pos[1]))
+    elif 'pause' in raw:
+        step.pause = _number(raw, 'pause', 0, where, 0.1, 3600)
     else:
         key = raw['key']
         if not isinstance(key, str) or not (len(key) == 1 and key.isalnum() or key.lower() in KEY_NAMES):
@@ -277,12 +280,14 @@ class Bot:
         self.sleep = sleep
         self.clock = clock
         self.log = log
+        self.last_detail = ''
 
     def locate(self, step):
-        """Procura o passo uma vez. Devolve (x, y) em coordenadas do mouse, ou None."""
+        """Procura o passo uma vez. Devolve (x, y) em coordenadas do mouse, ou None.
+        Guarda em last_detail a nota que chegou mais perto, para o log."""
         if step.pos:
             return step.pos
-        found, point, _ = match_step(step, self.grab())
+        found, point, self.last_detail = match_step(step, self.grab())
         return point if found else None
 
     def wait_for(self, step):
@@ -295,6 +300,10 @@ class Bot:
 
     def do_step(self, step):
         times = f' x{step.repeat}' if step.repeat > 1 else ''
+        if step.pause:
+            self.log(f'  esperando {step.pause:g}s ({step.name})')
+            self.sleep(step.pause)
+            return True
         if step.key:
             self.log(f'  apertando {step.key.upper()}{times} ({step.name})')
             for _ in range(step.repeat):
@@ -325,10 +334,11 @@ class Bot:
         for step in task.steps:
             if self.do_step(step):
                 continue
+            why = f' ({self.last_detail})' if self.last_detail and not step.key and not step.pos else ''
             if step.optional:
-                self.log(f'  "{step.name}" nao apareceu (opcional), seguindo')
+                self.log(f'  "{step.name}" nao apareceu{why} (opcional), seguindo')
                 continue
-            self.log(f'  "{step.name}" nao apareceu, fica para a proxima')
+            self.log(f'  "{step.name}" nao apareceu{why}, fica para a proxima')
             done = False
             break
         for step in task.cleanup:
@@ -619,6 +629,9 @@ def cmd_check(cfg, delay):
         for step in task.steps + task.cleanup:
             if step.key:
                 print(f'  tecla         {step.name}: {step.key.upper()} (o check nao testa tecla)')
+                continue
+            if step.pause:
+                print(f'  espera        {step.name}: {step.pause:g}s')
                 continue
             if step.pos:
                 print(f'  posicao fixa  {step.name}: {step.pos}')

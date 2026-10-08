@@ -493,6 +493,35 @@ class RealHudTest(unittest.TestCase):
         self.assertTrue(170 < point[0] < 230, point)
 
 
+class SecondWindowTest(unittest.TestCase):
+    """Print do usuario com a janela em 1914x999 (os recortes sairam de uma de
+    1919x1014), com o ! no Renascimento e o galo na torre (RECUAR). Os pedacos
+    vao para os mesmos lugares numa janela desse tamanho, para a area do ! (em
+    fracao da janela) valer."""
+
+    SIZE = (999, 1914)
+
+    def window(self, name, y, x):
+        canvas = np.full((*self.SIZE, 3), 110, np.uint8)
+        img = load_image(FIXTURES / f'{name}.png')
+        canvas[y:y + img.shape[0], x:x + img.shape[1]] = img
+        return Frame(canvas)
+
+    def test_alert_and_rebirth_button(self):
+        right = self.window('janela2_direita', 330, 1755)
+        self.assertTrue(match_step(STEP_ALERTA, right)[0])
+        self.assertTrue(match_step(STEP_RENASCIMENTO, right)[0])
+
+    def test_recuar_found_tower_not(self):
+        bottom = self.window('janela2_baixo', 870, 760)
+        found, point, _ = match_step(STEP_RECUAR, bottom)
+        self.assertTrue(found)
+        self.assertTrue(940 < point[0] < 980 and 970 < point[1] < 995, point)
+        self.assertFalse(match_step(STEP_TORRE, bottom)[0], 'com o galo na torre, TORRE nao pode ser achado')
+        # folga: a nota real do RECUAR aqui fica abaixo de 1.00 (0.95), longe do minimo
+        self.assertGreater(match(STEP_RECUAR, bottom.image).score - STEP_RECUAR.confidence, 0.1)
+
+
 class TaskTest(unittest.TestCase):
     def setUp(self):
         self.ws = Workspace()
@@ -568,6 +597,21 @@ class TaskTest(unittest.TestCase):
         self.assertTrue(make_bot(game).run_task(self.ws.load().tasks[0]))
         self.assertEqual(game.clicked, ['menu'], 'o primeiro passo so olha, nao clica')
 
+    def test_log_says_how_close_a_missing_step_got(self):
+        logs = []
+        game = FakeGame(ready=False)   # REBIRTH cinza: nao bate pela cor
+        game.menu = True
+        config = copy(CONFIG)
+        config['steps'] = [{'name': 'rebirth', 'image': 'templates/rebirth.png', 'wait': 0}]
+        config['cleanup'] = []
+        self.ws.write(config)
+        clock = FakeClock()
+        Bot(game.grab, game.click, game.press, sleep=clock.sleep, clock=clock.now,
+            log=logs.append).run_task(self.ws.load().tasks[0])
+        line = next(m for m in logs if 'nao apareceu' in m)
+        self.assertIn('formato', line)
+        self.assertIn('(max 40)', line)
+
     def test_check_only_step_absent_stops_task(self):
         config = copy(CONFIG)
         config['steps'] = [
@@ -609,6 +653,20 @@ class TaskTest(unittest.TestCase):
         self.ws.write(config)
         self.assertTrue(make_bot(game).run_task(self.ws.load().tasks[0]))
         self.assertEqual(game.clicked, ['menu'])
+
+    def test_pause_step(self):
+        config = copy(CONFIG)
+        config['steps'] = [{'name': 'esperar', 'pause': 2.5}]
+        config['cleanup'] = []
+        self.ws.write(config)
+        clock = FakeClock()
+        logs = []
+        game = FakeGame()
+        bot = Bot(game.grab, game.click, game.press, sleep=clock.sleep, clock=clock.now, log=logs.append)
+        self.assertTrue(bot.run_task(self.ws.load().tasks[0]))
+        self.assertEqual(clock.t, 2.5)
+        self.assertEqual(game.clicked, [])
+        self.assertIn('esperando 2.5s', logs[0])
 
     def test_click_repeat(self):
         config = copy(CONFIG)
@@ -673,10 +731,12 @@ class RunnerTest(unittest.TestCase):
         self.run_for(FakeGame(ready=False), 1, focus=lambda: calls.append(1))
         self.assertEqual(len(calls), 3)
 
-    def test_rebirth_checked_right_before_each_tower_run(self):
+    def test_rebirth_and_feeder_before_each_tower_run(self):
+        # ordem do config.example.json: renascer, comedouro (E + espera), torre
         config = copy(TASKS_CONFIG)
         by_name = {t['name']: t for t in config['tasks']}
-        config['tasks'] = [by_name['renascer'], by_name['torre'], by_name['comedouro']]
+        by_name['comedouro']['steps'].append({'name': 'esperar', 'pause': 2})
+        config['tasks'] = [by_name['renascer'], by_name['comedouro'], by_name['torre']]
         for t in config['tasks']:
             t['every_seconds'] = 10
         self.ws.write(config)
@@ -692,7 +752,35 @@ class RunnerTest(unittest.TestCase):
         self.assertGreaterEqual(runs.count('torre'), 4)
         for i, name in enumerate(runs):
             if name == 'torre':
-                self.assertTrue(i > 0 and runs[i - 1] == 'renascer', runs)
+                self.assertTrue(i > 1 and runs[i - 2:i] == ['renascer', 'comedouro'], runs)
+
+    def test_after_rebirth_feeder_then_wait_then_tower(self):
+        """Pedido do usuario: depois de renascer, cria o comedouro (E), espera
+        2 s e so entao manda a galinha para a torre."""
+        config = copy(TASKS_CONFIG)
+        by_name = {t['name']: t for t in config['tasks']}
+        by_name['comedouro']['steps'].append({'name': 'esperar o comedouro', 'pause': 2})
+        config['tasks'] = [by_name['renascer'], by_name['comedouro'], by_name['torre']]
+        self.ws.write(config)
+        cfg = self.ws.load()
+        clock = FakeClock()
+        events = []
+        game = FakeGame(ready=True, confirm_dialog=False)
+
+        def click(x, y):
+            game.click(x, y)
+            events.append((game.clicked[-1], clock.t))
+
+        def press(key, hold):
+            game.press(key, hold)
+            events.append(('E', clock.t))
+
+        bot = Bot(game.grab, click, press, sleep=clock.sleep, clock=clock.now, log=lambda m: None)
+        Runner(cfg, bot, clock=clock.now, log=lambda m: None).tick()
+        names = [n for n, _ in events]
+        self.assertEqual(names, ['menu', 'rebirth', 'close', 'E', 'E', 'tower'])
+        self.assertEqual(game.rebirths, 1)
+        self.assertGreaterEqual(events[-1][1] - events[-2][1], 2, '2 s entre o ultimo E e a TORRE')
 
     def run_flow(self, game, seconds=30):
         self.ws.write(FLOW_CONFIG)
@@ -885,6 +973,18 @@ class ConfigTest(unittest.TestCase):
         config['steps'][0]['color'] = '#FF3D02'
         self.assertConfigError(config, 'exatamente um')
 
+    def test_bad_pause(self):
+        for value in (0, -1, 'dois'):
+            with self.subTest(value=value):
+                config = copy(CONFIG)
+                config['steps'][0] = {'name': 'x', 'pause': value}
+                self.assertConfigError(config, 'pause')
+
+    def test_pause_and_key_together(self):
+        config = copy(CONFIG)
+        config['steps'][0] = {'name': 'x', 'pause': 2, 'key': 'e'}
+        self.assertConfigError(config, 'exatamente um')
+
     def test_bad_click(self):
         config = copy(CONFIG)
         config['steps'][0]['click'] = 'nao'
@@ -947,8 +1047,13 @@ class ConfigTest(unittest.TestCase):
         # recuar antes de renascer (o renascer roda logo depois dos 8 s); os
         # dois antes da torre: com o ! na tela, renasce em vez de mandar o
         # galo a toa, e logo depois de renascer o galo novo ja vai
-        self.assertEqual(names, ['recuar galo para renascer', 'renascer', 'mandar galo para a torre',
-                                 'melhorar comedouro'])
+        # recuar logo antes de renascer (o renascer roda depois dos 8 s); depois
+        # de renascer cria o comedouro, espera 2 s e so entao manda para a torre
+        self.assertEqual(names, ['recuar galo para renascer', 'renascer', 'melhorar comedouro',
+                                 'mandar galo para a torre'])
+        feeder = EXAMPLE_TASKS['melhorar comedouro'].steps
+        self.assertEqual([s.key for s in feeder], ['e', None])
+        self.assertEqual(feeder[-1].pause, 2)
         self.assertEqual({t.every_seconds for t in cfg.tasks}, {10}, 'mesmo ritmo: a ordem vale em toda rodada')
         self.assertEqual(STEP_RECUAR.after, 8)
         alert = cfg.tasks[1].steps[0]

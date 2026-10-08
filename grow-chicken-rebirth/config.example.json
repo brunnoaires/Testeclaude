@@ -1,6 +1,6 @@
 {
   "window_title": "Roblox",
-  "confidence": 0.85,
+  "confidence": 0.75,
   "color_tolerance": 40,
   "tasks": [
     {
@@ -11,7 +11,7 @@
         { "name": "abrir menu Renascimento", "image": "templates/renascimento.png", "wait": 3 },
         { "name": "VOLTE PRO SEU GALINHEIRO", "image": "templates/volte_galinheiro.png", "click": false, "wait": 2 },
         { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 2 },
-        { "name": "botao RECUAR", "image": "templates/botao_recuar.png", "wait": 3, "confidence": 0.9, "after": 8 }
+        { "name": "botao RECUAR", "image": "templates/botao_recuar.png", "wait": 3, "confidence": 0.8, "after": 8 }
       ],
       "cleanup": [
         { "name": "fechar menu", "image": "templates/fechar_menu.png", "wait": 1 }
@@ -30,17 +30,18 @@
       ]
     },
     {
-      "name": "mandar galo para a torre",
-      "every_seconds": 10,
-      "steps": [
-        { "name": "botao TORRE", "image": "templates/botao_torre.png", "wait": 0, "confidence": 0.9 }
-      ]
-    },
-    {
       "name": "melhorar comedouro",
       "every_seconds": 10,
       "steps": [
-        { "name": "E no comedouro", "key": "e", "repeat": 3, "after": 0.5 }
+        { "name": "E no comedouro", "key": "e", "repeat": 3, "after": 0.5 },
+        { "name": "esperar o comedouro", "pause": 2 }
+      ]
+    },
+    {
+      "name": "mandar galo para a torre",
+      "every_seconds": 10,
+      "steps": [
+        { "name": "botao TORRE", "image": "templates/botao_torre.png", "wait": 0, "confidence": 0.8 }
       ]
     }
   ]
