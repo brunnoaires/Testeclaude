@@ -372,7 +372,10 @@ class RealGameTest(unittest.TestCase):
     porque esses passos so procuram numa area (fracao da janela)."""
 
     WINDOW = (1005, 1919)
-    PLACE = {'menu_liberado': (620, 760), 'menu_bloqueado': (623, 761), 'menu_volte': (614, 797)}
+    PLACE = {'menu_liberado': (620, 760), 'menu_bloqueado': (623, 761), 'menu_volte': (614, 797),
+             'menu_renascimento': (640, 760)}
+    # menu_renascimento saiu de um print da janela com a barra de titulo do Windows
+    SIZES = {'menu_renascimento': (1040, 1920)}
 
     def menu(self, name, scale=1.0):
         """Janela com o pedaco do menu; scale != 1 simula o menu em outro
@@ -380,7 +383,7 @@ class RealGameTest(unittest.TestCase):
         img = load_image(FIXTURES / f'{name}.png')
         if scale != 1.0:
             img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-        canvas = np.full((*self.WINDOW, 3), 110, np.uint8)
+        canvas = np.full((*self.SIZES.get(name, self.WINDOW), 3), 110, np.uint8)
         y, x = self.PLACE[name]
         canvas[y:y + img.shape[0], x:x + img.shape[1]] = img
         return Frame(canvas)
@@ -389,9 +392,21 @@ class RealGameTest(unittest.TestCase):
         self.assertTrue(match_step(STEP_RENASCER, self.menu('menu_liberado'))[0])
 
     def test_ainda_nao_rejected(self):
-        self.assertFalse(match_step(STEP_RENASCER, self.menu('menu_bloqueado'))[0])
-        self.assertLess(match(STEP_RENASCER, load_image(FIXTURES / 'menu_bloqueado.png')).score, 0.6,
-                        'texto diferente: o formato ja nao deveria bater')
+        found, _, detail = match_step(STEP_RENASCER, self.menu('menu_bloqueado'))
+        self.assertFalse(found)
+        self.assertTrue(detail.startswith('0 pixels'), detail)   # botao marrom: nada do verde
+
+    def test_green_button_with_new_text(self):
+        """Relato do usuario: o jogo trocou o texto do botao verde de RENASCER
+        para RENASCIMENTO e o recorte da palavra parou de bater (0.74). Pela
+        cor, o texto nao importa."""
+        for scale in (0.9, 0.95, 1.0, 1.05, 1.1):
+            with self.subTest(scale=scale):
+                found, point, detail = match_step(STEP_RENASCER, self.menu('menu_renascimento', scale))
+                self.assertTrue(found, detail)
+        found, point, _ = match_step(STEP_RENASCER, self.menu('menu_renascimento'))
+        # o clique vai no centro do botao (no print: x 828-1092, y 668-750)
+        self.assertTrue(828 < point[0] < 1092 and 668 < point[1] < 750, point)
 
     def test_volte_galinheiro(self):
         self.assertTrue(match_step(STEP_VOLTE, self.menu('menu_volte'))[0])
@@ -1171,7 +1186,8 @@ class ConfigTest(unittest.TestCase):
             self.ws.load()
 
     def test_example_config_steps_used_by_real_tests(self):
-        self.assertEqual(STEP_RENASCER.image.name, 'botao_renascer.png')
+        self.assertIsNone(STEP_RENASCER.image)
+        self.assertEqual(STEP_RENASCER.color, parse_color('#2EAF3D'))
         self.assertEqual(STEP_RENASCIMENTO.image.name, 'renascimento.png')
         self.assertEqual(STEP_TORRE.image.name, 'botao_torre.png')
         self.assertIsNotNone(STEP_RENASCIMENTO.mask)
@@ -1181,18 +1197,14 @@ class ConfigTest(unittest.TestCase):
         # Todos os recortes do exemplo vem prontos em templates/.
         cfg = load_config(Path(__file__).resolve().parent.parent / 'config.example.json')
         names = [t.name for t in cfg.tasks]
-        # renascer vem antes da torre: com o ! na tela, renasce em vez de mandar
-        # o galo a toa; logo depois de renascer, o galo novo ja vai para a torre
-        # recuar antes de renascer (o renascer roda logo depois dos 8 s); os
-        # dois antes da torre: com o ! na tela, renasce em vez de mandar o
-        # galo a toa, e logo depois de renascer o galo novo ja vai
         # recuar logo antes de renascer (o renascer roda depois dos 8 s); depois
         # de renascer cria o comedouro, espera 2 s e so entao manda para a torre
         self.assertEqual(names, ['recuar galo para renascer', 'renascer', 'melhorar comedouro',
                                  'mandar galo para a torre'])
         self.assertEqual(STEP_VOLTE.size_range, 0.1)
-        self.assertEqual(STEP_RENASCER.size_range, 0.1)
         self.assertIsNotNone(STEP_VOLTE.area)
+        self.assertEqual(STEP_RENASCER.min_pixels, 7000)
+        self.assertIsNotNone(STEP_RENASCER.area)
         feeder = EXAMPLE_TASKS['melhorar comedouro'].steps
         self.assertEqual([s.key for s in feeder], ['e', None])
         self.assertEqual(feeder[-1].pause, 2)
