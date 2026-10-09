@@ -336,6 +336,20 @@ class VisionTest(unittest.TestCase):
 FIXTURES = Path(__file__).resolve().parent / 'fixtures'
 
 
+def window_with(name, at, size=(1014, 1919), scale=1.0, anchor=None):
+    """Janela do tamanho do print com o pedaco `name` colado em `at` (y, x),
+    no lugar de onde saiu. scale != 1 encolhe ou aumenta o pedaco em volta de
+    `anchor` (x, y) na janela, como o HUD faria com outra janela."""
+    img = load_image(FIXTURES / f'{name}.png')
+    canvas = np.full((*size, 3), 110, np.uint8)
+    y, x = at
+    canvas[y:y + img.shape[0], x:x + img.shape[1]] = img[:size[0] - y, :size[1] - x]
+    if scale != 1.0:
+        M = cv2.getRotationMatrix2D(anchor, 0, scale)
+        canvas = cv2.warpAffine(canvas, M, (size[1], size[0]), borderMode=cv2.BORDER_REPLICATE)
+    return Frame(canvas)
+
+
 EXAMPLE = load_config(Path(__file__).resolve().parent.parent / 'config.example.json')
 EXAMPLE_TASKS = {t.name: t for t in EXAMPLE.tasks}
 STEP_TORRE = EXAMPLE_TASKS['mandar galo para a torre'].steps[0]
@@ -399,14 +413,29 @@ class RealGameTest(unittest.TestCase):
                                     ('menu_liberado', STEP_VOLTE), ('menu_volte', STEP_RENASCER)):
                     self.assertFalse(match_step(step, self.menu(wrong, scale))[0], (wrong, step.name))
 
+    # hud_recuar (print do botao com o galo na torre) e hud_baixo (TORRE), nos
+    # lugares do print do comedouro; a barra de baixo fica presa no centro de baixo
+    BOTTOM = (960, 1014)
+
+    def recuar(self, scale=1.0):
+        return window_with('hud_recuar', (853, 894), scale=scale, anchor=self.BOTTOM)
+
+    def torre(self, scale=1.0):
+        return window_with('hud_baixo', (880, 760), scale=scale, anchor=self.BOTTOM)
+
     def test_recuar_and_torre_not_confused(self):
-        """hud_recuar: o botao da torre com o galo la dentro (RECUAR)."""
-        recuar = Frame(load_image(FIXTURES / 'hud_recuar.png'))
-        torre = Frame(load_image(FIXTURES / 'hud_baixo.png'))
-        self.assertTrue(match_step(STEP_RECUAR, recuar)[0])
-        self.assertFalse(match_step(STEP_RECUAR, torre)[0])
-        self.assertFalse(match_step(STEP_TORRE, recuar)[0], 'TORRE nunca pode achar o RECUAR (tiraria o galo)')
-        self.assertLess(match(STEP_TORRE, recuar.image).score, 0.75)
+        self.assertTrue(match_step(STEP_RECUAR, self.recuar())[0])
+        self.assertFalse(match_step(STEP_RECUAR, self.torre())[0])
+        self.assertFalse(match_step(STEP_TORRE, self.recuar())[0], 'TORRE nunca pode achar o RECUAR (tiraria o galo)')
+        self.assertLess(match(STEP_TORRE, load_image(FIXTURES / 'hud_recuar.png')).score, 0.75)
+
+    def test_recuar_and_torre_in_other_sizes(self):
+        for scale in (0.92, 0.96, 1.04, 1.08):
+            with self.subTest(scale=scale):
+                self.assertTrue(match_step(STEP_RECUAR, self.recuar(scale))[0])
+                self.assertTrue(match_step(STEP_TORRE, self.torre(scale))[0])
+                self.assertFalse(match_step(STEP_TORRE, self.recuar(scale))[0], 'TORRE nunca pode achar o RECUAR')
+                self.assertFalse(match_step(STEP_RECUAR, self.torre(scale))[0])
 
 
 class RealHudTest(unittest.TestCase):
@@ -524,10 +553,34 @@ class RealHudTest(unittest.TestCase):
                 self.assertEqual(m.center, (expected[0] + dx, expected[1]))
 
     def test_tower_found_on_the_right_label(self):
-        found, point, _ = match_step(STEP_TORRE, Frame(load_image(FIXTURES / 'hud_baixo.png')))
+        found, point, _ = match_step(STEP_TORRE, window_with('hud_baixo', (880, 760)))
         self.assertTrue(found)
         # TORRE fica no meio: CHAMAR a esquerda, CAOS PROFISSIONAL a direita
-        self.assertTrue(170 < point[0] < 230, point)
+        self.assertTrue(930 < point[0] < 990, point)
+
+    def test_rebirth_button_and_alert_in_other_sizes(self):
+        """Relato do usuario: parou de reconhecer o botao Renascimento. Com um
+        tamanho so, o HUD 5% menor ja derrubava a nota de 1.00 para 0.57. A
+        coluna da direita fica presa na borda direita da janela."""
+        right_edge = (1919, 507)
+        for scale in (0.9, 0.93, 0.96, 1.04, 1.08):
+            with self.subTest(scale=scale):
+                hud = window_with('hud_direita', self.HUD_AT, scale=scale, anchor=right_edge)
+                self.assertFalse(match(STEP_RENASCIMENTO, hud.image).found, 'so no tamanho original nao acharia')
+                self.assertTrue(match_step(STEP_RENASCIMENTO, hud)[0])
+                self.assertTrue(match_step(STEP_ALERTA, hud)[0])
+                sem = window_with('hud_direita_sem_alerta', self.HUD_AT, scale=scale, anchor=right_edge)
+                self.assertFalse(match_step(STEP_ALERTA, sem)[0])
+
+    def test_rebirth_button_not_confused_with_shop_or_band(self):
+        """Na coluna da direita tambem ficam a Loja e a Banda: tirando o
+        Renascimento, nada pode bater em nenhum tamanho."""
+        hud = window_with('hud_direita', self.HUD_AT)
+        img = hud.image.copy()
+        y, x = self.HUD_AT
+        img[y + 100:y + 220, x:x + 159] = img[y + 260:y + 380, x:x + 159]   # Banda por cima do Renascimento
+        found, _, detail = match_step(STEP_RENASCIMENTO, Frame(img))
+        self.assertFalse(found, detail)
 
 
 class SecondWindowTest(unittest.TestCase):
